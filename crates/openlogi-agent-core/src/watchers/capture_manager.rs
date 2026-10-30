@@ -6,10 +6,13 @@
 //! on, and in which order, does not. [`run`] is that loop; a
 //! [`CaptureManager`] is the state machine it drives.
 
-use openlogi_hid::{DeviceIoGate, PendingCaptureRestore};
+use openlogi_hid::{
+    CaptureSessionOutcome, ChannelRegistry, DeviceIoGate, DeviceRoute, PendingCaptureRestore,
+};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 
+use super::retry::RETRY_DELAY;
 use super::retry::wait_for_deadline;
 use super::shutdown::ManagerCompletion;
 use crate::receiver_access::ReceiverRequestState;
@@ -19,6 +22,29 @@ use crate::receiver_access::ReceiverRequestState;
 pub(super) struct PendingRestore {
     pub(super) token: PendingCaptureRestore,
     pub(super) retry_at: Instant,
+}
+
+impl PendingRestore {
+    /// Follow an elected route while preserving same-route replacement-only ownership.
+    pub(super) async fn retry(
+        self,
+        route: Option<DeviceRoute>,
+        registry: &ChannelRegistry,
+    ) -> Option<Self> {
+        let outcome = match route {
+            Some(route) if route != *self.token.route() => {
+                self.token.retry_via(route, registry).await
+            }
+            _ => self.token.retry(registry).await,
+        };
+        match outcome {
+            CaptureSessionOutcome::Restored => None,
+            CaptureSessionOutcome::RestorePending(token) => Some(Self {
+                token,
+                retry_at: Instant::now() + RETRY_DELAY,
+            }),
+        }
+    }
 }
 
 /// One capture manager's state machine, as [`run`] drives it.

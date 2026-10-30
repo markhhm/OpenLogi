@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use openlogi_core::binding::{Binding, ButtonId};
+use openlogi_core::device_order::PhysicalDeviceKey;
 use openlogi_hid::{
     CaptureHost, CaptureSessionOutcome, CaptureSessionStop, CapturedInput, DeviceRoute,
     PendingCaptureRestore, run_keyboard_capture_session,
@@ -42,12 +43,15 @@ use crate::runtime::{ActionDispatcher, HidppSessionId};
 /// that key in place as the app comes to the front, and hands it back when
 /// the app leaves; the keys that stay diverted are not written (#2140).
 /// Bindings that only change an already-diverted key's action hot-swap
-/// without touching firmware. Only a different route or safety policy restarts the session.
+/// without touching firmware. Only a different physical identity, route or safety policy
+/// restarts the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct KeyboardSpec {
     /// Safety policy retained for the whole hardware session.
     pub policy: openlogi_hid::ControlCapturePolicy,
+    /// Known stable identity for following owed restoration across transports.
+    pub physical_key: Option<PhysicalDeviceKey>,
     /// Current config namespace for actions from this keyboard. Settings
     /// adoption may change it without cycling an unchanged hardware target.
     pub config_key: String,
@@ -64,11 +68,12 @@ pub struct KeyboardSpec {
 /// Read-only, lossless, coalescing view of the keyboard-capture spec.
 pub type SharedKeyboardSpec = watch::Receiver<Option<Arc<KeyboardSpec>>>;
 
-/// Capture identity: the keyboard's route. Only a change here restarts the
+/// Capture identity: the physical device, route and safety policy. Only a change here restarts the
 /// hardware session; everything else is in the [`KeyboardDispatchPlan`].
 #[derive(Clone, PartialEq, Eq)]
 struct KeyboardTarget {
     policy: openlogi_hid::ControlCapturePolicy,
+    physical_key: Option<PhysicalDeviceKey>,
     route: DeviceRoute,
 }
 
@@ -76,6 +81,7 @@ impl KeyboardTarget {
     fn for_spec(spec: &KeyboardSpec) -> Self {
         Self {
             policy: spec.policy,
+            physical_key: spec.physical_key.clone(),
             route: spec.route.clone(),
         }
     }
@@ -93,7 +99,12 @@ struct KeyboardDispatchPlan {
 type RunningKeyboardSession =
     CaptureSession<KeyboardTarget, KeyboardDispatchPlan, CaptureSessionStop>;
 type KeyboardSlot =
-    CaptureSlot<KeyboardTarget, KeyboardDispatchPlan, PendingRestore, CaptureSessionStop>;
+    CaptureSlot<KeyboardTarget, KeyboardDispatchPlan, KeyboardRestore, CaptureSessionStop>;
+
+struct KeyboardRestore {
+    physical_key: Option<PhysicalDeviceKey>,
+    restore: PendingRestore,
+}
 
 struct KeyboardInput {
     session: HidppSessionId,
@@ -272,7 +283,7 @@ impl KeyboardManagerState {
             .and_then(KeyboardSlot::recovery_mut)
             .and_then(|recovery| recovery.pending_restore.as_mut())
         {
-            pending.retry_at = tokio::time::Instant::now();
+            pending.restore.retry_at = tokio::time::Instant::now();
         }
     }
 
@@ -323,7 +334,7 @@ impl KeyboardManagerState {
             .as_ref()
             .and_then(KeyboardSlot::recovery)
             .and_then(|recovery| recovery.pending_restore.as_ref())
-            .is_some_and(|pending| pending.retry_at <= now);
+            .is_some_and(|pending| pending.restore.retry_at <= now);
         if restore_due && let Some(lease) = receiver_access.try_acquire_for_session() {
             handoff_lease = Some(lease);
             let Some(KeyboardSlot::Recovering(mut recovery)) = self.slot.take() else {
@@ -333,14 +344,20 @@ impl KeyboardManagerState {
                 self.slot = Some(KeyboardSlot::Recovering(recovery));
                 return;
             };
-            if let CaptureSessionOutcome::RestorePending(token) =
-                pending.token.retry(&channels.access.registry).await
-            {
-                recovery.pending_restore = Some(PendingRestore {
-                    token,
-                    retry_at: tokio::time::Instant::now() + RETRY_DELAY,
+            let elected = wanted
+                .as_ref()
+                .filter(|(target, _)| {
+                    target.physical_key.is_some() && target.physical_key == pending.physical_key
+                })
+                .map(|(target, _)| target.route.clone());
+            recovery.pending_restore = pending
+                .restore
+                .retry(elected, &channels.access.registry)
+                .await
+                .map(|restore| KeyboardRestore {
+                    physical_key: pending.physical_key,
+                    restore,
                 });
-            }
             if !recovery.is_empty() {
                 self.slot = Some(KeyboardSlot::Recovering(recovery));
             }
@@ -411,14 +428,21 @@ impl KeyboardManagerState {
                 // therefore remains the sole input owner until firmware
                 // restoration is complete.
                 let now = tokio::time::Instant::now();
-                let pending_restore = done.pending_restore.map(|token| PendingRestore {
-                    token,
-                    retry_at: now + RETRY_DELAY,
-                });
                 let restart_at = device_io_allowed.then_some(now + RETRY_DELAY);
                 let Some(slot) = self.slot.as_mut() else {
                     return false;
                 };
+                let Some(running) = slot.session() else {
+                    return false;
+                };
+                let physical_key = running.target().physical_key.clone();
+                let pending_restore = done.pending_restore.map(|token| KeyboardRestore {
+                    physical_key,
+                    restore: PendingRestore {
+                        token,
+                        retry_at: now + RETRY_DELAY,
+                    },
+                });
                 let Some((dispatch_session, unexpected)) =
                     slot.complete(&done.session, pending_restore, restart_at)
                 else {
@@ -447,7 +471,7 @@ fn next_deadline(
         return None;
     }
     let recovery = slot.and_then(KeyboardSlot::recovery)?;
-    recovery.next_deadline(|pending| pending.retry_at)
+    recovery.next_deadline(|pending| pending.restore.retry_at)
 }
 
 /// Retire the tracked keyboard epoch, preserve its ordered input ownership

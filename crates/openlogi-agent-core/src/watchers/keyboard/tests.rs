@@ -8,6 +8,7 @@ const SEARCH_KEY: ButtonId = ButtonId::control(0x00d4);
 
 fn target() -> KeyboardTarget {
     KeyboardTarget {
+        physical_key: openlogi_core::device_order::PhysicalDeviceKey::parse("unit:00000001"),
         policy: openlogi_hid::ControlCapturePolicy::Keyboard,
         route: DeviceRoute::Direct {
             vendor_id: 0x046d,
@@ -26,6 +27,21 @@ fn dispatch(action: Action) -> KeyboardDispatchPlan {
         bindings: BTreeMap::from([(SEARCH_KEY, Binding::Single(action))]),
         divert: BTreeMap::from([(0x00d4, SEARCH_KEY)]),
     }
+}
+
+fn action_runtime(
+    access: DeviceAccess,
+    ring: mpsc::UnboundedSender<Option<String>>,
+) -> crate::runtime::ActionRuntime {
+    crate::runtime::ActionRuntime::new(
+        Arc::default(),
+        Arc::default(),
+        access,
+        ring,
+        crate::highlight::Highlight::default(),
+        mpsc::unbounded_channel().0,
+    )
+    .unwrap()
 }
 
 fn live_session(epoch: u64) -> RunningKeyboardSession {
@@ -53,6 +69,7 @@ async fn publication_and_receiver_request_change_wanted_state_immediately() {
     let access = ReceiverAccess::default();
     let mut requests = access.subscribe_requests();
     let published = KeyboardSpec {
+        physical_key: target().physical_key,
         policy: openlogi_hid::ControlCapturePolicy::Keyboard,
         config_key: "keyboard-a".to_owned(),
         route: target().route,
@@ -129,9 +146,7 @@ async fn divert_set_changes_reach_the_running_session_in_place() {
     let access = ReceiverAccess::default();
     let (_signal, device_io) = openlogi_hid::device_io_channel();
     let (ring, _ring_rx) = mpsc::unbounded_channel();
-    let mut actions = crate::runtime::ActionRuntime::new(
-        Arc::default(),
-        Arc::default(),
+    let mut actions = action_runtime(
         DeviceAccess {
             channel: CaptureChannelSlot::default(),
             registry: ChannelRegistry::default(),
@@ -140,10 +155,7 @@ async fn divert_set_changes_reach_the_running_session_in_place() {
             transport_turns: crate::hardware::TransportTurns::default(),
         },
         ring,
-        crate::highlight::Highlight::default(),
-        tokio::sync::mpsc::unbounded_channel().0,
-    )
-    .unwrap();
+    );
     let divert = watch::Sender::new(dispatch(Action::MissionControl).divert);
     let mut session_view = divert.subscribe();
     let mut session = live_session(7);
@@ -187,6 +199,7 @@ fn target_changes_freeze_dispatch_until_teardown_finishes() {
     let mut session = live_session(7);
     let old_dispatch = session.dispatch().clone();
     let replacement = KeyboardTarget {
+        physical_key: target().physical_key,
         policy: openlogi_hid::ControlCapturePolicy::Keyboard,
         route: DeviceRoute::Direct {
             vendor_id: 0x046d,
@@ -250,6 +263,7 @@ async fn recovery_manager_waits_for_control_events_and_shutdown_between_retries(
 
     for shutdown_requested in [false, true] {
         let (spec_tx, spec) = watch::channel(Some(Arc::new(KeyboardSpec {
+            physical_key: target().physical_key,
             policy: openlogi_hid::ControlCapturePolicy::Keyboard,
             config_key: "keyboard-a".to_owned(),
             route: target().route,
@@ -270,15 +284,7 @@ async fn recovery_manager_waits_for_control_events_and_shutdown_between_retries(
             device_io,
             transport_turns: crate::hardware::TransportTurns::default(),
         };
-        let mut actions = crate::runtime::ActionRuntime::new(
-            Arc::default(),
-            Arc::default(),
-            device_access.clone(),
-            ring,
-            crate::highlight::Highlight::default(),
-            tokio::sync::mpsc::unbounded_channel().0,
-        )
-        .unwrap();
+        let mut actions = action_runtime(device_access.clone(), ring);
         let (shutdown_tx, shutdown) = oneshot::channel();
         let mut manager = std::pin::pin!(manage(KeyboardManagerContext {
             spec,
@@ -346,5 +352,108 @@ async fn a_session_body_that_panics_still_reports_done_after_its_inputs() {
             );
         }
         _ => panic!("Done must follow the last input even when the body panicked"),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn presenter_transport_switch_moves_owed_restore_before_rearming() {
+    let bluetooth = DeviceRoute::Direct {
+        vendor_id: 0x046d,
+        product_id: 0xb503,
+    };
+    let receiver = DeviceRoute::Unifying {
+        receiver_uid: "fixture-receiver".into(),
+        slot: 1,
+    };
+    for (old, new) in [(bluetooth.clone(), receiver.clone()), (receiver, bluetooth)] {
+        for identity in ["same", "different", "unknown"] {
+            let access = ReceiverAccess::default();
+            let (_signal, device_io) = openlogi_hid::device_io_channel();
+            let device_access = DeviceAccess {
+                channel: CaptureChannelSlot::default(),
+                registry: ChannelRegistry::default(),
+                receiver_access: access.clone(),
+                device_io,
+                transport_turns: crate::hardware::TransportTurns::default(),
+            };
+            let (ring, _ring_rx) = mpsc::unbounded_channel();
+            let mut actions = action_runtime(device_access.clone(), ring);
+            let mut state = KeyboardManagerState::new(actions.dispatcher());
+            let mut old_target = target();
+            old_target.policy = openlogi_hid::ControlCapturePolicy::Presenter;
+            old_target.route = old.clone();
+            if identity == "unknown" {
+                old_target.physical_key = None;
+            }
+            let (stop, _stopped) = oneshot::channel();
+            state.slot = Some(KeyboardSlot::running(CaptureSession::active(
+                session_id(7),
+                old_target,
+                dispatch(Action::Spotlight),
+                stop,
+            )));
+            let (published, spec) = watch::channel(None);
+            let requests = access.subscribe_requests();
+            assert!(state.handle_session_event(
+                KeyboardSessionEvent::Done(KeyboardDone {
+                    session: session_id(7),
+                    pending_restore: Some(PendingCaptureRestore::detached(old.clone())),
+                }),
+                true,
+                &requests,
+                &spec,
+            ));
+            let channels = KeyboardSessionChannels {
+                access: device_access,
+                events: mpsc::unbounded_channel().0,
+            };
+            state
+                .reconcile(*requests.borrow(), true, false, None, &channels)
+                .await;
+            published.send_replace(Some(Arc::new(KeyboardSpec {
+                physical_key: match identity {
+                    "same" => target().physical_key,
+                    "different" => {
+                        openlogi_core::device_order::PhysicalDeviceKey::parse("unit:00000002")
+                    }
+                    _ => None,
+                },
+                policy: openlogi_hid::ControlCapturePolicy::Presenter,
+                config_key: "keyboard-a".into(),
+                route: new.clone(),
+                wanted: dispatch(Action::Spotlight).divert,
+                bindings: dispatch(Action::Spotlight).bindings,
+            })));
+            state.expedite_pending_restore();
+            state
+                .reconcile(
+                    *requests.borrow(),
+                    true,
+                    true,
+                    wanted_session(*requests.borrow(), &spec),
+                    &channels,
+                )
+                .await;
+            let pending = state
+                .slot
+                .as_ref()
+                .and_then(KeyboardSlot::recovery)
+                .and_then(|recovery| recovery.pending_restore.as_ref())
+                .unwrap();
+            assert_eq!(
+                pending.restore.token.route(),
+                if identity == "same" { &new } else { &old },
+                "restoration follows only the same identified physical presenter: {identity}"
+            );
+            assert!(
+                state.has_pending_restore(),
+                "a missing channel keeps the firmware debt; it must not be discarded"
+            );
+            assert!(
+                state.slot.as_ref().unwrap().session().is_none(),
+                "the successor waits for restoration"
+            );
+            actions.shutdown();
+        }
     }
 }

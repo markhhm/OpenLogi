@@ -989,3 +989,56 @@ async fn presenter_mode_notice_uses_the_current_config_language() {
         openlogi_ipc::NoticeKind::PresenterMode(openlogi_core::binding::PresenterMode::Laser)
     ));
 }
+
+#[test]
+fn presenter_transport_switch_publishes_the_new_capture_route() {
+    let mut bluetooth = direct_inventory(Some("presenter-fixture"), [1, 2, 3, 4]);
+    bluetooth.receiver.product_id = 0xb503;
+    bluetooth.paired[0].kind = DeviceKind::Presenter;
+    bluetooth.paired[0].codename = Some("SPOTLIGHT".into());
+    let mut receiver = bluetooth.clone();
+    receiver.receiver.name = "USB Receiver".into();
+    receiver.receiver.product_id = 0xc53e;
+    receiver.receiver.unique_id = Some("fixture-receiver".into());
+    receiver.paired[0].slot = 1;
+    receiver.paired[0].wpid = Some(0x405c);
+    for (old, new, expected) in [
+        (
+            bluetooth.clone(),
+            receiver.clone(),
+            DeviceRoute::Unifying {
+                receiver_uid: "fixture-receiver".into(),
+                slot: 1,
+            },
+        ),
+        (
+            receiver,
+            bluetooth,
+            DeviceRoute::Direct {
+                vendor_id: 0x046d,
+                product_id: 0xb503,
+            },
+        ),
+    ] {
+        let mut orch = orchestrator(Config::default());
+        let mut published = orch.shared.presenter_spec.clone();
+        orch.refresh_inventory(std::slice::from_ref(&old), &[], false);
+        let previous = published.borrow_and_update().clone().unwrap();
+        orch.refresh_inventory(&[], &[], false);
+        assert!(published.has_changed().unwrap());
+        assert!(published.borrow_and_update().is_none());
+        orch.refresh_inventory(std::slice::from_ref(&new), &[], false);
+        assert!(published.has_changed().unwrap());
+        let next = published.borrow_and_update().clone().unwrap();
+        assert_eq!(next.route, expected);
+        assert_ne!(next.route, previous.route);
+        assert_eq!(
+            next.config_key, previous.config_key,
+            "one physical presenter keeps its bindings"
+        );
+        assert_eq!(next.wanted, previous.wanted);
+        assert_eq!(next.bindings, previous.bindings);
+        assert!(next.physical_key.is_some());
+        assert_eq!(next.physical_key, previous.physical_key);
+    }
+}

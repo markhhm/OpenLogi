@@ -1,0 +1,12 @@
+id: agent-capture-restore-retry-owner
+language: rust
+severity: error
+message: Capture restoration route selection and retry pacing belong to watchers::capture_manager::PendingRestore::retry; call it instead of re-deriving the token handoff.
+files:
+  - crates/openlogi-agent-core/src/watchers/**/*.rs
+ignores:
+  - crates/openlogi-agent-core/src/watchers/capture_manager.rs
+rule:
+  any:
+    - pattern: $TOKEN.retry_via($ROUTE, $REGISTRY)
+    - pattern: $PENDING.token.retry($REGISTRY)

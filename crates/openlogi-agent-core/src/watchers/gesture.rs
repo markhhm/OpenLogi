@@ -358,18 +358,7 @@ async fn retry_pending_restores(
         let elected = routes
             .and_then(|routes| routes.restore_route(&key))
             .cloned();
-        let outcome = match elected {
-            Some(route) if route != *pending.token.route() => {
-                pending.token.retry_via(route, registry).await
-            }
-            _ => pending.token.retry(registry).await,
-        };
-        if let CaptureSessionOutcome::RestorePending(token) = outcome {
-            recovery.pending_restore = Some(PendingRestore {
-                token,
-                retry_at: Instant::now() + RETRY_DELAY,
-            });
-        }
+        recovery.pending_restore = pending.retry(elected, registry).await;
         if !recovery.is_empty() {
             slots.insert(key, GestureSlot::Recovering(recovery));
         }

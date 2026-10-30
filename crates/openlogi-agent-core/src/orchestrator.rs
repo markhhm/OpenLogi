@@ -913,6 +913,7 @@ impl Orchestrator {
         }
         Some(KeyboardSpec {
             policy,
+            physical_key: Self::capture_identity(chosen.dev).map(|(key, _)| key),
             config_key: chosen.dev.config_key.clone(),
             route: chosen.dev.route.clone()?,
             wanted: chosen.divert.wanted.clone(),
@@ -1062,7 +1063,7 @@ impl Orchestrator {
         let presenter = self.presenter_spec_for();
         let mut plans = Vec::new();
         let mut routes = BTreeMap::new();
-        for dev in &self.devices {
+        for dev in self.devices.iter().filter(|dev| dev.online) {
             let Some((physical_key, route)) = Self::capture_identity(dev) else {
                 continue;
             };
@@ -1109,11 +1110,8 @@ impl Orchestrator {
         CapturePublication::new(plans, routes)
     }
 
-    /// Physical key and route of one online device inventory can still address.
+    /// Physical key and route of one inventory device, including sleeping keyboards.
     fn capture_identity(dev: &AgentDevice) -> Option<(PhysicalDeviceKey, DeviceRoute)> {
-        if !dev.online {
-            return None;
-        }
         let route = dev.route.clone()?;
         let identity = DeviceIdentity::from_parts(dev.serial.as_deref(), dev.unit_id);
         let physical_key = canonical_device_key(&stable_id(dev), Some(&identity))
