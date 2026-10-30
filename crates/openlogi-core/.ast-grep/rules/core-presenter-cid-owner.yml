@@ -1,0 +1,12 @@
+# Four-digit HID++ CIDs; two-digit keycodes/registers with the same value are unrelated.
+id: core-presenter-cid-owner
+language: rust
+severity: error
+message: Presenter CIDs belong to openlogi_core::binding::{PRESENTER_TAP_CID, PRESENTER_HOLD_CID}, defined beside the presenter defaults; use those constants.
+files:
+  - crates/**/*.rs
+ignores:
+  - crates/openlogi-core/src/binding/defaults.rs
+rule:
+  kind: integer_literal
+  regex: '(?i)^0x00(50|d8)(?:_?u16)?$'

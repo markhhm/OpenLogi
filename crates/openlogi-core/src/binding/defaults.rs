@@ -120,12 +120,18 @@ pub fn default_binding_for(button: ButtonId) -> Binding {
     }
 }
 
+/// HID++ control ID for the presenter top button's short tap.
+pub const PRESENTER_TAP_CID: u16 = 0x0050;
+
+/// HID++ control ID for the presenter top button's hold.
+pub const PRESENTER_HOLD_CID: u16 = 0x00d8;
+
 /// Presenter bindings used only where the effective config has no assignment.
 ///
 /// Only the Spotlight top button is captured; next/back stay native.
 #[must_use]
 pub fn default_presenter_bindings() -> BTreeMap<ButtonId, Binding> {
-    [0x0050, 0x00d8]
+    [PRESENTER_TAP_CID, PRESENTER_HOLD_CID]
         .into_iter()
         .map(|cid| (ButtonId::control(cid), Binding::Single(Action::Spotlight)))
         .collect()

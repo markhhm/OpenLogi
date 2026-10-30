@@ -1315,7 +1315,7 @@ fn presenter_tap(
     released_at: Instant,
     events: &mut Vec<ButtonRuntimeEvent>,
 ) {
-    let press = presenter_press(session, id, 0x0050);
+    let press = presenter_press(session, id, PRESENTER_TAP_CID);
     assert_eq!(
         press.start_action(),
         None,
@@ -1424,14 +1424,14 @@ fn presenter_duplicate_down_cancels_ambiguous_pending_taps() {
     for id in [2, 3] {
         process_input(
             &mut state,
-            ButtonInput::Down(presenter_press(&session, id, 0x0050)),
+            ButtonInput::Down(presenter_press(&session, id, PRESENTER_TAP_CID)),
             &mut |event| events.push(event),
         );
     }
     process_input(
         &mut state,
         ButtonInput::Up {
-            key: presenter_press(&session, 3, 0x0050).token.key,
+            key: presenter_press(&session, 3, PRESENTER_TAP_CID).token.key,
             released_at: now,
         },
         &mut |event| events.push(event),
@@ -1474,7 +1474,7 @@ fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_ta
             "hold" => commands
                 .send(ButtonCommand::Input {
                     generation: 0,
-                    input: ButtonInput::Down(presenter_press(&session, 2, 0x00d8)),
+                    input: ButtonInput::Down(presenter_press(&session, 2, PRESENTER_HOLD_CID)),
                 })
                 .unwrap(),
             "source" => commands
@@ -1483,7 +1483,7 @@ fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_ta
                 )))
                 .unwrap(),
             "remapped_hold" => {
-                let mut press = presenter_press(&session, 2, 0x00d8);
+                let mut press = presenter_press(&session, 2, PRESENTER_HOLD_CID);
                 press.behavior = PressBehavior::Immediate(Action::Copy);
                 commands
                     .send(ButtonCommand::Input {
@@ -1493,7 +1493,7 @@ fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_ta
                     .unwrap();
             }
             "stale" => {
-                let press = presenter_press(&session, 2, 0x0050);
+                let press = presenter_press(&session, 2, PRESENTER_TAP_CID);
                 state.press(press.clone());
                 commands
                     .send(ButtonCommand::CancelStalePress(press.token))
@@ -1531,7 +1531,7 @@ fn presenter_worker_wakes_for_a_single_tap_without_new_input() {
     .unwrap();
     let input = owner.input();
     let session = HidppSessionId::with_epoch("presenter", 1);
-    let button = ButtonId::control(0x0050);
+    let button = ButtonId::control(PRESENTER_TAP_CID);
     assert!(
         input
             .try_hidpp_down(

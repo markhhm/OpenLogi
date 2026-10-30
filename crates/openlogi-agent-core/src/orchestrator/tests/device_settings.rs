@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use openlogi_core::binding::{PRESENTER_HOLD_CID, PRESENTER_TAP_CID};
 use openlogi_hid::reprog_controls::BACK_CIDS;
 use openlogi_hid::session::gesture::MainWheelDivert;
 
@@ -799,7 +800,7 @@ fn keyboard_spec_never_diverts_reserved_controls() {
     );
     config.set_binding(
         "kbd",
-        ButtonId::control(0x0050),
+        ButtonId::control(PRESENTER_TAP_CID),
         Binding::Single(Action::Copy),
     );
     let mut orch = orchestrator(config);
@@ -848,12 +849,12 @@ fn presenter_spec_defaults_only_the_top_button_beside_a_bound_keyboard() {
     assert_eq!(
         spec.wanted,
         BTreeMap::from([
-            (0x0050, ButtonId::control(0x0050)),
-            (0x00d8, ButtonId::control(0x00d8))
+            (PRESENTER_TAP_CID, ButtonId::control(PRESENTER_TAP_CID)),
+            (PRESENTER_HOLD_CID, ButtonId::control(PRESENTER_HOLD_CID))
         ])
     );
     assert_eq!(
-        spec.bindings[&ButtonId::control(0x00d8)],
+        spec.bindings[&ButtonId::control(PRESENTER_HOLD_CID)],
         Binding::Single(Action::Spotlight)
     );
     assert_eq!(
@@ -901,7 +902,7 @@ fn presenter_spec_defaults_only_the_top_button_beside_a_bound_keyboard() {
 
 #[test]
 fn presenter_spec_preserves_effective_overrides_including_do_nothing() {
-    let top = ButtonId::control(0x00d8);
+    let top = ButtonId::control(PRESENTER_HOLD_CID);
     let mut config = Config::default();
     config.set_binding("spotlight", top, Binding::Single(Action::Copy));
     config.set_per_app_binding("spotlight", "editor", top, Some(Action::None));

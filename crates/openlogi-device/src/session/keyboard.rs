@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use hidpp::protocol::v20;
-use openlogi_core::binding::ButtonId;
+use openlogi_core::binding::{ButtonId, PRESENTER_TAP_CID};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 
@@ -59,7 +59,7 @@ const RESERVED_KEYBOARD_CONTROLS: [u16; 5] = [
     reprog_controls::control_ids::HOST_SWITCH_CHANNEL_1.0,
     reprog_controls::control_ids::HOST_SWITCH_CHANNEL_2.0,
     reprog_controls::control_ids::HOST_SWITCH_CHANNEL_3.0,
-    0x0050,
+    PRESENTER_TAP_CID,
     0x0051,
 ];
 
@@ -87,7 +87,8 @@ impl ControlCapturePolicy {
     /// Whether this control must remain on its native firmware function.
     #[must_use]
     pub fn is_reserved(self, cid: u16) -> bool {
-        RESERVED_KEYBOARD_CONTROLS.contains(&cid) && !(self == Self::Presenter && cid == 0x0050)
+        RESERVED_KEYBOARD_CONTROLS.contains(&cid)
+            && !(self == Self::Presenter && cid == PRESENTER_TAP_CID)
     }
 }
 
@@ -427,7 +428,7 @@ impl ArmedCapture for ArmedKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openlogi_core::binding::KNOWN_CONTROLS;
+    use openlogi_core::binding::{KNOWN_CONTROLS, PRESENTER_HOLD_CID};
 
     /// The keyboard catalog names keys; the mouse capture path owns the
     /// standard-button, gesture-source and DPI-shift control families. One
@@ -527,11 +528,21 @@ mod tests {
 
     #[test]
     fn presenter_policy_only_releases_the_top_tap_from_keyboard_reservations() {
-        let cids = [0x0050, 0x0051, 0x00d1, 0x00d2, 0x00d3, 0x00d8];
+        let cids = [
+            PRESENTER_TAP_CID,
+            0x0051,
+            0x00d1,
+            0x00d2,
+            0x00d3,
+            PRESENTER_HOLD_CID,
+        ];
         let table: Vec<_> = cids.into_iter().map(|cid| control(cid, true)).collect();
         for (policy, allowed) in [
-            (ControlCapturePolicy::Keyboard, vec![0x00d8]),
-            (ControlCapturePolicy::Presenter, vec![0x0050, 0x00d8]),
+            (ControlCapturePolicy::Keyboard, vec![PRESENTER_HOLD_CID]),
+            (
+                ControlCapturePolicy::Presenter,
+                vec![PRESENTER_TAP_CID, PRESENTER_HOLD_CID],
+            ),
         ] {
             let change = DivertChange::between(&keys(&[]), &keys(&cids), &table, policy);
             assert_eq!(
@@ -543,7 +554,11 @@ mod tests {
                 allowed
             );
             assert!(!can_divert(0xffff, &table, policy));
-            assert!(!can_divert(0x0050, &[control(0x0050, false)], policy));
+            assert!(!can_divert(
+                PRESENTER_TAP_CID,
+                &[control(PRESENTER_TAP_CID, false)],
+                policy
+            ));
         }
         assert_eq!(
             ControlCapturePolicy::for_kind(openlogi_core::device::DeviceKind::Mouse),

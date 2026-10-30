@@ -36,7 +36,8 @@ pub use button::{ButtonId, ParseButtonIdError};
 pub use category::Category;
 pub use control::{Cid, KNOWN_CONTROLS, KnownControl, UNKNOWN_CONTROL_TRANSLATION_KEY};
 pub use defaults::{
-    default_binding, default_binding_for, default_gesture_binding, default_presenter_bindings,
+    PRESENTER_HOLD_CID, PRESENTER_TAP_CID, default_binding, default_binding_for,
+    default_gesture_binding, default_presenter_bindings,
 };
 pub use effect::{Effect, MediaKey, MouseButton, NativeAction, Script, Shortcut};
 pub use gesture::GestureDirection;

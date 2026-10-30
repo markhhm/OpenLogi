@@ -623,10 +623,10 @@ fn presenter_defaults_capture_only_the_spotlight_top_button() {
         "other presenter controls must stay native"
     );
     assert_eq!(
-        defaults[&ButtonId::control(0x0050)],
+        defaults[&ButtonId::control(PRESENTER_TAP_CID)],
         Binding::Single(Action::Spotlight)
     );
-    let top = ButtonId::control(0x00d8);
+    let top = ButtonId::control(PRESENTER_HOLD_CID);
     assert_eq!(
         defaults.get(&top),
         Some(&Binding::Single(Action::Spotlight))

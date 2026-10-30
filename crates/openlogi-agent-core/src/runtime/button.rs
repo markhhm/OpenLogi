@@ -14,7 +14,9 @@ use std::sync::mpsc;
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
-use openlogi_core::binding::{Action, Binding, ButtonId, LONG_PRESS_THRESHOLD};
+use openlogi_core::binding::{
+    Action, Binding, ButtonId, LONG_PRESS_THRESHOLD, PRESENTER_HOLD_CID, PRESENTER_TAP_CID,
+};
 use tracing::warn;
 
 use super::ActionDispatchTarget;
@@ -294,7 +296,7 @@ impl ActivePress {
     /// The presenter-only top tap uses the same stable Spotlight binding as its hold.
     fn is_presenter_tap(&self) -> bool {
         matches!(self.token.key.source, ButtonSource::Hidpp(_))
-            && self.control() == &PressControl::Button(ButtonId::control(0x0050))
+            && self.control() == &PressControl::Button(ButtonId::control(PRESENTER_TAP_CID))
             && self.behavior.start_action() == Some(&Action::Spotlight)
     }
 
@@ -393,7 +395,7 @@ struct ButtonState {
 impl ButtonState {
     fn press(&mut self, press: ActivePress) -> Option<ActivePress> {
         let top_hold = matches!(press.token.key.source, ButtonSource::Hidpp(_))
-            && press.control() == &PressControl::Button(ButtonId::control(0x00d8));
+            && press.control() == &PressControl::Button(ButtonId::control(PRESENTER_HOLD_CID));
         if (top_hold
             || press.start_action() == Some(&Action::Spotlight)
             || self.active.contains_key(&press.token.key))
