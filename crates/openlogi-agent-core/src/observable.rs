@@ -30,6 +30,7 @@ use openlogi_ipc::{
 };
 use tokio::sync::watch;
 
+use crate::highlight::Highlight;
 use crate::lock_keys::LockKeyIndicator;
 use crate::notices::NoticeBoard;
 
@@ -38,6 +39,7 @@ pub struct ObservableState {
     tx: watch::Sender<Observation>,
     notices: NoticeBoard,
     lock_keys: LockKeyIndicator,
+    highlight: Highlight,
 }
 
 impl ObservableState {
@@ -85,6 +87,7 @@ impl ObservableState {
             tx,
             notices: NoticeBoard::default(),
             lock_keys: LockKeyIndicator::default(),
+            highlight: Highlight::default(),
         }
     }
 
@@ -98,6 +101,12 @@ impl ObservableState {
     #[must_use]
     pub fn lock_keys(&self) -> &LockKeyIndicator {
         &self.lock_keys
+    }
+
+    /// The pointer highlight owned by a physical press.
+    #[must_use]
+    pub fn highlight(&self) -> &Highlight {
+        &self.highlight
     }
 
     /// Clone the whole current state.

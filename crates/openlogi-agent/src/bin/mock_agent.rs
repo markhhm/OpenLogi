@@ -71,9 +71,10 @@ use openlogi_ipc::transport;
 use openlogi_ipc::{
     ActionRingCommandError, ActionRingInvocation, Agent, AgentSnapshot, AgentStatus,
     BacklightObservation, ClientKind, ConfigReloadError, ForegroundApps, FoundDevice, Generation,
-    Identity, InventoryHealth, LockKeyChange, LockKeyObservation, MonitorEvent, NoticeKind,
-    NoticeObservation, OBSERVE_HOLD, Observation, PROTOCOL_VERSION, PairingCommandError,
-    PairingFailure, PairingPhase, PairingUpdate, RingObservation, SavedConfig, SavedConfigVerdict,
+    HighlightObservation, Identity, InventoryHealth, LockKeyChange, LockKeyObservation,
+    MonitorEvent, NoticeKind, NoticeObservation, OBSERVE_HOLD, Observation, PROTOCOL_VERSION,
+    PairingCommandError, PairingFailure, PairingPhase, PairingUpdate, RingObservation, SavedConfig,
+    SavedConfigVerdict,
 };
 use succession::Compat;
 use tarpc::context::Context;
@@ -915,6 +916,7 @@ struct MockAgent {
     notices: Arc<NoticeBoard>,
     /// The lock-key indicator the overlay shows, ended as the agent ends it.
     lock_keys: LockKeyIndicator,
+    highlight: openlogi_agent_core::highlight::Highlight,
     /// The backlight indicator the overlay shows, ended as the agent ends it.
     backlight: BacklightOverlayManager,
     /// Signalled by the console to close every open client connection. Each
@@ -937,6 +939,7 @@ impl MockAgent {
             served: Arc::new(Mutex::new(served)),
             notices: Arc::new(NoticeBoard::default()),
             lock_keys: LockKeyIndicator::default(),
+            highlight: openlogi_agent_core::highlight::Highlight::default(),
             backlight: BacklightOverlayManager::default(),
             disconnects: Arc::new(disconnects),
             settings: app_settings,
@@ -1301,6 +1304,10 @@ impl Agent for MockAgent {
             self.notices.post(notice, None);
         }
         self.notices.observe(since).await
+    }
+
+    async fn observe_highlight(self, _: Context, since: Generation) -> HighlightObservation {
+        self.highlight.observe(since).await
     }
 
     async fn observe_lock_keys(self, _: Context, since: Generation) -> LockKeyObservation {

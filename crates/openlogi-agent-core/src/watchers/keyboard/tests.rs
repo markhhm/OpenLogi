@@ -138,6 +138,7 @@ async fn divert_set_changes_reach_the_running_session_in_place() {
             transport_turns: crate::hardware::TransportTurns::default(),
         },
         ring,
+        crate::highlight::Highlight::default(),
     )
     .unwrap();
     let divert = watch::Sender::new(dispatch(Action::MissionControl).divert);
@@ -269,6 +270,7 @@ async fn recovery_manager_waits_for_control_events_and_shutdown_between_retries(
             Arc::default(),
             device_access.clone(),
             ring,
+            crate::highlight::Highlight::default(),
         )
         .unwrap();
         let (shutdown_tx, shutdown) = oneshot::channel();

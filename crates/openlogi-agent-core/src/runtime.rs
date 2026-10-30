@@ -177,6 +177,10 @@ impl ActionExecutor {
             }
             return;
         }
+        if matches!(action, Action::Spotlight) {
+            debug!("Spotlight requires a physical press lifecycle — action ignored");
+            return;
+        }
         let Some(target) = target.resolve(action) else {
             return;
         };
@@ -280,13 +284,15 @@ impl ActionExecutor {
 
 struct ButtonEventHandler {
     executor: ActionExecutor,
+    highlight: crate::highlight::Highlight,
     held: HeldShortcuts,
 }
 
 impl ButtonEventHandler {
-    fn new(executor: ActionExecutor) -> Self {
+    fn new(executor: ActionExecutor, highlight: crate::highlight::Highlight) -> Self {
         Self {
             executor,
+            highlight,
             held: HeldShortcuts::default(),
         }
     }
@@ -303,6 +309,7 @@ impl ButtonEventHandler {
             }
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
+                self.highlight.end(press.token());
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {
                         PressControl::Button(button) => {
@@ -324,6 +331,10 @@ impl ButtonEventHandler {
         device_key: Option<&str>,
         target: ActionDispatchTarget,
     ) {
+        if matches!(action, Action::Spotlight) {
+            self.highlight.show(press);
+            return;
+        }
         if action.held_chord().is_some() && target.resolve(action).is_none() {
             return;
         }
@@ -357,6 +368,7 @@ impl ActionRuntime {
         pointer_speeds: Arc<PointerSpeeds>,
         access: DeviceAccess,
         action_ring: tokio::sync::mpsc::UnboundedSender<Option<String>>,
+        highlight: crate::highlight::Highlight,
     ) -> io::Result<Self> {
         let executor = ActionExecutor {
             dpi_cycle,
@@ -364,7 +376,7 @@ impl ActionRuntime {
             access,
             action_ring,
         };
-        let mut button_handler = ButtonEventHandler::new(executor.clone());
+        let mut button_handler = ButtonEventHandler::new(executor.clone(), highlight);
         let buttons = ButtonRuntimeOwner::spawn(move |event| button_handler.handle(event))?;
         let input = buttons.input();
         Ok(Self {
@@ -620,6 +632,53 @@ mod tests {
     use super::*;
 
     static BROWSER_NAV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn spotlight_tracks_release_and_runtime_shutdown() {
+        let highlight = crate::highlight::Highlight::default();
+        let executor = executor_with(Arc::default());
+        let mut runtime = ActionRuntime::new(
+            executor.dpi_cycle,
+            executor.pointer_speeds,
+            executor.access,
+            executor.action_ring,
+            highlight.clone(),
+        )
+        .unwrap();
+        let dispatcher = runtime.dispatcher();
+        dispatcher
+            .executor
+            .dispatch_to(&Action::Spotlight, None, ActionDispatchTarget::Keyboard);
+        assert_eq!(highlight.observe(0).await.shown, None);
+        let binding = Binding::Single(Action::Spotlight);
+        assert!(
+            dispatcher
+                .try_hook_button_down(
+                    ButtonId::Back,
+                    Some(&binding),
+                    ActionDispatchTarget::Keyboard
+                )
+                .is_some()
+        );
+        let shown = highlight.observe(1).await;
+        assert_eq!(shown.shown, Some(openlogi_ipc::HighlightStyle::Spotlight));
+        assert!(dispatcher.try_hook_button_up(ButtonId::Back));
+        let hidden = highlight.observe(shown.generation).await;
+        assert_eq!(hidden.shown, None);
+        assert!(
+            dispatcher
+                .try_hook_button_down(
+                    ButtonId::Back,
+                    Some(&binding),
+                    ActionDispatchTarget::Keyboard
+                )
+                .is_some()
+        );
+        let shown = highlight.observe(hidden.generation).await;
+        assert_eq!(shown.shown, Some(openlogi_ipc::HighlightStyle::Spotlight));
+        runtime.shutdown();
+        assert_eq!(highlight.observe(shown.generation).await.shown, None);
+    }
 
     fn executor_with(pointer_speeds: Arc<PointerSpeeds>) -> ActionExecutor {
         let (_signal, device_io) = openlogi_hid::device_io_channel();

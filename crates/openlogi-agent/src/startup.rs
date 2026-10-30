@@ -60,7 +60,7 @@ pub(crate) async fn bootstrap(config: Config) -> Option<Core> {
         Arc::clone(&observable),
     )));
     let shared = orchestrator.lock().await.shared();
-    let inputs = InputServices::start(&shared)?;
+    let inputs = InputServices::start(&shared, &observable)?;
     let backlight_overlay = BacklightOverlayManager::default();
 
     // Shared between the hook callback (which mirrors events into it) and
@@ -134,7 +134,7 @@ pub(crate) struct InputServices {
 }
 
 impl InputServices {
-    fn start(shared: &SharedHandles) -> Option<Self> {
+    fn start(shared: &SharedHandles, observable: &ObservableState) -> Option<Self> {
         let ring = Arc::new(ActionRingManager::default());
         let (sender, triggers) = tokio::sync::mpsc::unbounded_channel();
         let action_runtime = match ActionRuntime::new(
@@ -142,6 +142,7 @@ impl InputServices {
             shared.pointer_speeds(),
             shared.device_access(),
             sender,
+            observable.highlight().clone(),
         ) {
             Ok(runtime) => runtime,
             Err(e) => {
