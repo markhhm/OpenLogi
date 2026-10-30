@@ -159,10 +159,7 @@ const LOCK_KEYS: Cell<LockKeyObservation> = Cell {
 const HIGHLIGHT: Cell<HighlightObservation> = Cell {
     open: Observer::highlight,
     what: "highlight",
-    lost: Some(|| HighlightObservation {
-        generation: 0,
-        shown: None,
-    }),
+    lost: Some(|| HighlightObservation::new(0, None)),
 };
 
 /// The observation that closes the indicator when the agent that was driving

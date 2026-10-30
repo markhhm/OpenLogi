@@ -126,9 +126,9 @@ struct KeyboardManagerContext {
     shutdown: oneshot::Receiver<()>,
 }
 
-/// Spawn the keyboard-capture manager thread. It owns a current-thread tokio
-/// runtime that keeps one capture session pointed at the bound keyboard and
-/// dispatches each captured key press.
+/// Spawn a named control-capture manager for a keyboard or presenter.
+/// Each instance needs an independent spec and capture channel; `name` identifies
+/// its thread and tracing span. Its current-thread runtime dispatches captured presses.
 #[must_use]
 pub fn spawn(
     name: &'static str,

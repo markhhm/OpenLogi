@@ -379,10 +379,10 @@ async fn losing_the_agent_hides_the_highlight() {
                 if since != 0 {
                     return std::future::pending().await;
                 }
-                Ok(AgentResponse::ObserveHighlight(HighlightObservation {
-                    generation: 1,
-                    shown: Some(HighlightStyle::Spotlight),
-                }))
+                Ok(AgentResponse::ObserveHighlight(HighlightObservation::new(
+                    1,
+                    Some(HighlightStyle::Spotlight),
+                )))
             })
         },
         async move {

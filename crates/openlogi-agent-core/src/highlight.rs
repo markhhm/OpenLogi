@@ -13,10 +13,10 @@ struct State {
 
 impl State {
     fn observation(&self) -> HighlightObservation {
-        HighlightObservation {
-            generation: self.generation,
-            shown: self.owner.as_ref().map(|_| HighlightStyle::Spotlight),
-        }
+        HighlightObservation::new(
+            self.generation,
+            self.owner.as_ref().map(|_| HighlightStyle::Spotlight),
+        )
     }
 }
 
@@ -38,6 +38,7 @@ impl Default for Highlight {
 }
 
 impl Highlight {
+    /// Publish this owner; repeated triggers from the same press are idempotent.
     pub(crate) fn show(&self, press: &PressToken) {
         self.published.send_if_modified(|state| {
             if state.owner.as_ref() == Some(press) {
@@ -49,6 +50,7 @@ impl Highlight {
         });
     }
 
+    /// Hide only if this press still owns the highlight.
     pub(crate) fn end(&self, press: &PressToken) {
         self.published.send_if_modified(|state| {
             if state.owner.as_ref() != Some(press) {
@@ -81,10 +83,7 @@ mod tests {
         let highlight = Highlight::default();
         assert_eq!(
             highlight.observe(0).await,
-            HighlightObservation {
-                generation: 1,
-                shown: None
-            }
+            HighlightObservation::new(1, None)
         );
         let first = PressToken::hook_for_test(1, ButtonId::Back);
         let second = PressToken::hook_for_test(2, ButtonId::Back);
@@ -93,22 +92,22 @@ mod tests {
             highlight.observe(1).await.shown,
             Some(HighlightStyle::Spotlight)
         );
+        highlight.show(&first);
+        assert_eq!(
+            highlight.observe(0).await.generation,
+            2,
+            "a repeated trigger from the same press must not republish"
+        );
         highlight.show(&second);
         highlight.end(&first);
         assert_eq!(
             highlight.observe(0).await,
-            HighlightObservation {
-                generation: 3,
-                shown: Some(HighlightStyle::Spotlight)
-            }
+            HighlightObservation::new(3, Some(HighlightStyle::Spotlight))
         );
         highlight.end(&second);
         assert_eq!(
             highlight.observe(3).await,
-            HighlightObservation {
-                generation: 4,
-                shown: None
-            }
+            HighlightObservation::new(4, None)
         );
         highlight.end(&second);
         assert_eq!(highlight.observe(4).await.generation, 4);

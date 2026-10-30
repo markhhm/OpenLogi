@@ -755,10 +755,10 @@ mod tests {
                         }
                         AgentRequest::ObserveHighlight { since } => {
                             recorded.lock().unwrap().push(("highlight", since));
-                            AgentResponse::ObserveHighlight(HighlightObservation {
-                                generation: since + 1,
-                                shown: Some(crate::HighlightStyle::Spotlight),
-                            })
+                            AgentResponse::ObserveHighlight(HighlightObservation::new(
+                                since + 1,
+                                Some(crate::HighlightStyle::Spotlight),
+                            ))
                         }
                         other => panic!("an observer sent an unexpected request: {other:?}"),
                     };

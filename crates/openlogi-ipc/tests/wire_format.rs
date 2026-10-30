@@ -1222,15 +1222,10 @@ fn spotlight_highlight() {
     assert_wire(&openlogi_core::binding::Action::Spotlight, "37");
     assert_wire(&AgentRequest::ObserveHighlight { since: 4 }, "2f04");
     assert_wire(&openlogi_ipc::HighlightStyle::Spotlight, "00");
-    let hidden = openlogi_ipc::HighlightObservation {
-        generation: 1,
-        shown: None,
-    };
+    let hidden = openlogi_ipc::HighlightObservation::new(1, None);
     assert_wire(&hidden, "0100");
-    let shown = openlogi_ipc::HighlightObservation {
-        generation: 2,
-        shown: Some(openlogi_ipc::HighlightStyle::Spotlight),
-    };
+    let shown =
+        openlogi_ipc::HighlightObservation::new(2, Some(openlogi_ipc::HighlightStyle::Spotlight));
     assert_wire(&shown, "020100");
     assert_wire(&AgentResponse::ObserveHighlight(shown), "2f020100");
 }

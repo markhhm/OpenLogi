@@ -627,12 +627,21 @@ pub struct LockKeyObservation {
 }
 
 /// The highlight the overlay shows for the lifetime of a physical press.
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HighlightObservation {
     /// Pass back to the next [`Agent::observe_highlight`].
     pub generation: Generation,
     /// `None` closes the highlight immediately.
     pub shown: Option<HighlightStyle>,
+}
+
+impl HighlightObservation {
+    /// Construct the highlight published at `generation`.
+    #[must_use]
+    pub const fn new(generation: Generation, shown: Option<HighlightStyle>) -> Self {
+        Self { generation, shown }
+    }
 }
 
 /// Pointer highlight styles. Variants are append-only on the wire.

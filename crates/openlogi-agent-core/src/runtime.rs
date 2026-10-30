@@ -363,6 +363,7 @@ pub struct ActionRuntime {
 
 impl ActionRuntime {
     /// Build the action executor and its source-independent button worker.
+    /// Pass the IPC server's highlight cell so it observes this worker's presses.
     pub fn new(
         dpi_cycle: Arc<RwLock<DpiCycles>>,
         pointer_speeds: Arc<PointerSpeeds>,

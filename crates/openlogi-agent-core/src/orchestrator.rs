@@ -118,6 +118,7 @@ impl AgentDevice {
 /// Cheaply cloneable handles handed to hooks and background managers.
 /// The orchestrator remains the sole producer for its watch-backed projections;
 /// consumers receive only read capabilities through this type.
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct SharedHandles {
     /// Backend identity, I/O gate, channel pool, and inventory source shared by
@@ -151,7 +152,7 @@ pub struct SharedHandles {
     /// Independent presenter capture so a keyboard keeps its own session.
     pub presenter_spec: SharedKeyboardSpec,
     /// The presenter's capture channel, independent of keyboard Fn-lock I/O.
-    pub presenter_channel: CaptureChannelSlot,
+    presenter_channel: CaptureChannelSlot,
     /// The keyboard capture session's open channel, reused by Fn-lock writes
     /// (the mouse-oriented [`Self::capture_channel`] points elsewhere).
     pub keyboard_channel: CaptureChannelSlot,

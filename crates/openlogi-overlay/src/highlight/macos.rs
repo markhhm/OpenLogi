@@ -10,6 +10,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::Frame;
 
+/// Capture the pointer and its containing display in global logical points.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "screen-sized logical coordinates fit GPUI's f32 pixels"
@@ -27,6 +28,7 @@ pub(super) fn capture() -> Option<Frame> {
     })
 }
 
+/// Place the click-through popup above captured presentations without taking focus.
 #[expect(
     unsafe_code,
     reason = "borrow GPUI's main-thread NSView and read the CoreGraphics shielding level"
