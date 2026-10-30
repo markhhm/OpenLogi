@@ -365,3 +365,51 @@ async fn losing_the_agent_hides_the_lock_key_indicator() {
         .expect("a lost agent's indicator is hidden");
     assert_eq!(shown, [Some(caps_lock_on), None]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn losing_the_agent_hides_the_highlight() {
+    use openlogi_ipc::{HighlightObservation, HighlightStyle};
+    let (hang_up, gone) = tokio::sync::oneshot::channel::<()>();
+    let agent = in_memory_agent(
+        move |request| {
+            Box::pin(async move {
+                let AgentRequest::ObserveHighlight { since } = request else {
+                    panic!("unexpected request: {request:?}")
+                };
+                if since != 0 {
+                    return std::future::pending().await;
+                }
+                Ok(AgentResponse::ObserveHighlight(HighlightObservation {
+                    generation: 1,
+                    shown: Some(HighlightStyle::Spotlight),
+                }))
+            })
+        },
+        async move {
+            let _ = gone.await;
+        },
+    );
+    let mut agents = Some(agent);
+    let connect = move || {
+        let agent = agents.take();
+        async move {
+            match agent {
+                Some(agent) => Some(agent),
+                None => std::future::pending().await,
+            }
+        }
+    };
+    let mut hang_up = Some(hang_up);
+    let mut shown = Vec::new();
+    let observing = observe(connect, HIGHLIGHT, |observed: HighlightObservation| {
+        shown.push(observed.shown);
+        if let Some(hang_up) = hang_up.take() {
+            let _ = hang_up.send(());
+        }
+        observed.shown.is_some()
+    });
+    tokio::time::timeout(Duration::from_secs(5), observing)
+        .await
+        .expect("disconnect closes the highlight");
+    assert_eq!(shown, [Some(HighlightStyle::Spotlight), None]);
+}

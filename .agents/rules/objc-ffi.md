@@ -2,6 +2,7 @@
 paths:
   - "crates/openlogi-desktop/src/platform/**"
   - "crates/openlogi-overlay/src/platform.rs"
+  - "crates/openlogi-overlay/src/highlight/macos.rs"
   - "crates/openlogi-permissions/**"
   - "crates/openlogi-camera/**"
   - "crates/openlogi-agent/src/activity_macos.rs"
@@ -50,6 +51,7 @@ files; **keep this table in sync when you add or move one**:
 | `openlogi-inject/src/inject/macos/main_thread.rs` | the bounded hand-off of main-thread work from the action worker to the main queue (`dispatch2`) |
 | `openlogi-inject/src/inject/macos/virtual_keyboard/device.rs` | the `IOHIDUserDevice` virtual keyboard that key synthesis types through: its creation (which needs the `com.apple.developer.hid.virtual.device` entitlement) and its timestamped input reports. The report state in `virtual_keyboard.rs` above it is safe code |
 | `openlogi-overlay/src/platform.rs` | the Actions Ring helper's window policy: accessory activation, a non-activating panel that a click does not make key, the `NSEvent` global click-away monitor (`block2`), and `CGGetActiveDisplayList` / `CGDisplayBounds` |
+| `openlogi-overlay/src/highlight/macos.rs` | the Spotlight window's borrowed native `NSView`, click-through `NSWindow`, capture-shield level, and global display-frame placement |
 | `openlogi-permissions/src/macos.rs` | non-prompting permission reads + System-Settings deep links; `+[CBManager authorization]` via an `AnyClass` lookup |
 
 Every rule below binds all of them, whichever crate they live in.
@@ -298,6 +300,8 @@ under a `SAFETY` comment. Where it currently lives on macOS:
   a safe fn, in `openlogi-permissions` and `openlogi-hid` alike.
 - `overlay/platform.rs` — `NSEvent::removeMonitor` and the
   `CGGetActiveDisplayList` / `CGDisplayBounds` pair.
+- `overlay/highlight/macos.rs` — borrowing the live GPUI `NSView` from its native
+  window handle on the main thread, and reading `CGShieldingWindowLevel`.
 - `desktop/platform/os.rs` — reading AppKit's `NSAppearanceName` statics to set
   `NSApp.appearance`.
 - `desktop/platform/registration/macos.rs` — the `SMAppService` calls (all generated

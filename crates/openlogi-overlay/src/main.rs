@@ -17,6 +17,7 @@
 rust_i18n::i18n!("../openlogi-ui/locales", fallback = "en");
 
 mod backlight;
+mod highlight;
 mod ipc;
 mod lock_key;
 mod notice;
@@ -59,6 +60,7 @@ fn main() -> Result<()> {
         mut backlights,
         mut notices,
         mut lock_keys,
+        mut highlights,
         commands,
     } = ipc::spawn();
 
@@ -79,6 +81,12 @@ fn main() -> Result<()> {
         // Reapply the helper policy after that reset, without constructing
         // NSApplication before GPUI has installed its subclass.
         platform::configure_application();
+        cx.spawn(async move |cx| {
+            while let Some(observed) = highlights.recv().await {
+                cx.update(|cx| highlight::present(cx, observed.shown));
+            }
+        })
+        .detach();
         let live_session = Arc::new(ClickAwaySession::new());
         spawn_click_away_dismissal(cx, Arc::clone(&live_session));
         let shelf = Rc::new(RefCell::new(NoticeShelf::default()));
