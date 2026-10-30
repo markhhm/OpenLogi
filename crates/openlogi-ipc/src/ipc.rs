@@ -154,7 +154,8 @@ pub use succession::Identity;
 ///      timer, five-second steps up to two hours.
 /// v42: `KeyboardUsage` accepts Insert (`0x49`) and Print Screen (`0x46`),
 ///      so a `KeyCombo` can carry a usage a v41 agent rejects.
-pub const PROTOCOL_VERSION: u32 = 42;
+/// v43: `Action::Spotlight` and hold-to-highlight observation appended.
+pub const PROTOCOL_VERSION: u32 = 43;
 
 /// Environment variable through which the agent hands a supervised helper the
 /// run token it will serve, so the helper knows which agent it belongs to
@@ -625,6 +626,22 @@ pub struct LockKeyObservation {
     pub language: Option<String>,
 }
 
+/// The highlight the overlay shows for the lifetime of a physical press.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HighlightObservation {
+    /// Pass back to the next [`Agent::observe_highlight`].
+    pub generation: Generation,
+    /// `None` closes the highlight immediately.
+    pub shown: Option<HighlightStyle>,
+}
+
+/// Pointer highlight styles. Variants are append-only on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HighlightStyle {
+    /// Dim the display outside a circle around the pointer.
+    Spotlight,
+}
+
 /// A lock key that a keyboard reported turning on or off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockKeyChange {
@@ -955,4 +972,6 @@ pub trait Agent {
     async fn reload_saved_config_with_verdict(
         saved: SavedConfig,
     ) -> Result<SavedConfigVerdict, ConfigReloadError>;
+    /// Observe the current press-owned highlight, independently of other overlays.
+    async fn observe_highlight(since: Generation) -> HighlightObservation;
 }

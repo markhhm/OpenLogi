@@ -20,10 +20,10 @@ use openlogi_fixture::{
 use openlogi_ipc::client::ProtocolSkew;
 use openlogi_ipc::{
     ActionRingCommandError, ActionRingInvocation, Agent, AgentStatus, BacklightObservation,
-    ClientKind, ConfigReloadError, ForegroundApps, Generation, Identity, InventoryHealth,
-    LockKeyObservation, MonitorEvent, NoticeObservation, Observation, PROTOCOL_VERSION,
-    PairingCommandError, PairingFailure, PairingPhase, PairingUpdate, RingObservation, SavedConfig,
-    SavedConfigVerdict,
+    ClientKind, ConfigReloadError, ForegroundApps, Generation, HighlightObservation, Identity,
+    InventoryHealth, LockKeyObservation, MonitorEvent, NoticeObservation, Observation,
+    PROTOCOL_VERSION, PairingCommandError, PairingFailure, PairingPhase, PairingUpdate,
+    RingObservation, SavedConfig, SavedConfigVerdict,
 };
 use tarpc::client::RpcError;
 use tarpc::context::Context as TarpcContext;
@@ -423,6 +423,10 @@ impl Agent for TestAgent {
 
     async fn observe_lock_keys(self, _: TarpcContext, _since: Generation) -> LockKeyObservation {
         unreachable!("profile capture must not inspect the lock-key indicator")
+    }
+
+    async fn observe_highlight(self, _: TarpcContext, _since: Generation) -> HighlightObservation {
+        unreachable!("profile capture must not inspect the pointer highlight")
     }
 
     async fn read_force_sensing(

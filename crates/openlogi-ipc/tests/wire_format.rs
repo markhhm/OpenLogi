@@ -112,7 +112,7 @@ fn representative_smartshift_status() -> SmartShiftStatus {
 /// unreleased version and leave this pin alone (`crates/openlogi-ipc/AGENTS.md`).
 #[test]
 fn protocol_version_is_pinned() {
-    assert_eq!(PROTOCOL_VERSION, 42);
+    assert_eq!(PROTOCOL_VERSION, 43);
 }
 
 #[test]
@@ -1215,4 +1215,22 @@ fn disable_keys_requests_are_appended() {
         },
         "2d000846303044434146450101",
     );
+}
+
+#[test]
+fn spotlight_highlight() {
+    assert_wire(&openlogi_core::binding::Action::Spotlight, "37");
+    assert_wire(&AgentRequest::ObserveHighlight { since: 4 }, "2f04");
+    assert_wire(&openlogi_ipc::HighlightStyle::Spotlight, "00");
+    let hidden = openlogi_ipc::HighlightObservation {
+        generation: 1,
+        shown: None,
+    };
+    assert_wire(&hidden, "0100");
+    let shown = openlogi_ipc::HighlightObservation {
+        generation: 2,
+        shown: Some(openlogi_ipc::HighlightStyle::Spotlight),
+    };
+    assert_wire(&shown, "020100");
+    assert_wire(&AgentResponse::ObserveHighlight(shown), "2f020100");
 }

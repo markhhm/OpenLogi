@@ -33,8 +33,9 @@ use tarpc::client::{self, RpcError};
 use tarpc::context::{self, Context};
 
 use crate::{
-    AgentClient, BacklightObservation, ClientKind, Generation, LockKeyObservation,
-    NoticeObservation, OBSERVE_HOLD, Observation, PROTOCOL_VERSION, RingObservation, transport,
+    AgentClient, BacklightObservation, ClientKind, Generation, HighlightObservation,
+    LockKeyObservation, NoticeObservation, OBSERVE_HOLD, Observation, PROTOCOL_VERSION,
+    RingObservation, transport,
 };
 
 /// Why a client could not be established.
@@ -227,6 +228,12 @@ impl Stamped for NoticeObservation {
     }
 }
 
+impl Stamped for HighlightObservation {
+    fn generation(&self) -> Generation {
+        self.generation
+    }
+}
+
 impl Stamped for LockKeyObservation {
     fn generation(&self) -> Generation {
         self.generation
@@ -357,6 +364,17 @@ impl Observer<LockKeyObservation> {
         Self::new(client, |client, since| {
             let client = client.clone();
             Box::pin(async move { client.observe_lock_keys(observe_context(), since).await })
+        })
+    }
+}
+
+impl Observer<HighlightObservation> {
+    /// Observe the press-owned pointer highlight over `client`.
+    #[must_use]
+    pub fn highlight(client: AgentClient) -> Self {
+        Self::new(client, |client, since| {
+            let client = client.clone();
+            Box::pin(async move { client.observe_highlight(observe_context(), since).await })
         })
     }
 }
@@ -735,6 +753,13 @@ mod tests {
                                 language: None,
                             })
                         }
+                        AgentRequest::ObserveHighlight { since } => {
+                            recorded.lock().unwrap().push(("highlight", since));
+                            AgentResponse::ObserveHighlight(HighlightObservation {
+                                generation: since + 1,
+                                shown: Some(crate::HighlightStyle::Spotlight),
+                            })
+                        }
                         other => panic!("an observer sent an unexpected request: {other:?}"),
                     };
                     Ok(answer)
@@ -744,7 +769,8 @@ mod tests {
         );
         let mut notices = Observer::notices(client.clone());
         let mut backlight = Observer::backlight(client.clone());
-        let mut lock_keys = Observer::lock_keys(client);
+        let mut lock_keys = Observer::lock_keys(client.clone());
+        let mut highlight = Observer::highlight(client);
 
         for expected in [1, 2] {
             let observed = notices.next().await.expect("the agent is up");
@@ -753,9 +779,13 @@ mod tests {
             assert_eq!(observed.map(|observed| observed.generation), Some(expected));
             let observed = lock_keys.next().await.expect("the agent is up");
             assert_eq!(observed.map(|observed| observed.generation), Some(expected));
+            let observed = highlight.next().await.expect("the agent is up").unwrap();
+            assert_eq!(observed.generation, expected);
+            assert_eq!(observed.shown, Some(crate::HighlightStyle::Spotlight));
         }
         assert_eq!(asked_by(&asked, "notices"), [0, 1]);
         assert_eq!(asked_by(&asked, "backlight"), [0, 1]);
         assert_eq!(asked_by(&asked, "lock keys"), [0, 1]);
+        assert_eq!(asked_by(&asked, "highlight"), [0, 1]);
     }
 }
