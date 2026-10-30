@@ -847,7 +847,10 @@ fn presenter_spec_defaults_only_the_top_button_beside_a_bound_keyboard() {
         .expect("a fresh presenter has a default");
     assert_eq!(
         spec.wanted,
-        BTreeMap::from([(0x00d8, ButtonId::control(0x00d8))])
+        BTreeMap::from([
+            (0x0050, ButtonId::control(0x0050)),
+            (0x00d8, ButtonId::control(0x00d8))
+        ])
     );
     assert_eq!(
         spec.bindings[&ButtonId::control(0x00d8)],

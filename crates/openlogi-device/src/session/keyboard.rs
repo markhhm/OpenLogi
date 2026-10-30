@@ -55,7 +55,7 @@ use crate::reprog_controls::{self, CtrlIdInfo, RawControlEvent, ReprogControlsV4
 /// naming a control — so the policy lives here, next to the hardware write,
 /// and is applied again by the orchestrator so a binding that names only
 /// reserved controls publishes no session at all.
-pub const RESERVED_KEYBOARD_CONTROLS: [u16; 5] = [
+const RESERVED_KEYBOARD_CONTROLS: [u16; 5] = [
     reprog_controls::control_ids::HOST_SWITCH_CHANNEL_1.0,
     reprog_controls::control_ids::HOST_SWITCH_CHANNEL_2.0,
     reprog_controls::control_ids::HOST_SWITCH_CHANNEL_3.0,
@@ -63,13 +63,36 @@ pub const RESERVED_KEYBOARD_CONTROLS: [u16; 5] = [
     0x0051,
 ];
 
-/// Whether `cid` is one of the [`RESERVED_KEYBOARD_CONTROLS`].
-#[must_use]
-pub fn is_reserved_keyboard_control(cid: u16) -> bool {
-    RESERVED_KEYBOARD_CONTROLS.contains(&cid)
+/// The device family's control-capture safety policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlCapturePolicy {
+    /// Preserve touchpad clicks and Easy-Switch keys.
+    Keyboard,
+    /// Permit the presenter top tap, while preserving every other reserved key.
+    Presenter,
 }
 
-/// Capture the requested keyboard controls on `route` until `host.shutdown`
+impl ControlCapturePolicy {
+    /// Select a policy only for a supported control-capture device family.
+    #[must_use]
+    pub const fn for_kind(kind: openlogi_core::device::DeviceKind) -> Option<Self> {
+        use openlogi_core::device::DeviceKind;
+        match kind {
+            DeviceKind::Keyboard => Some(Self::Keyboard),
+            DeviceKind::Presenter => Some(Self::Presenter),
+            _ => None,
+        }
+    }
+
+    /// Whether this control must remain on its native firmware function.
+    #[must_use]
+    pub fn is_reserved(self, cid: u16) -> bool {
+        RESERVED_KEYBOARD_CONTROLS.contains(&cid) && !(self == Self::Presenter && cid == 0x0050)
+    }
+}
+
+/// Capture the requested keyboard or presenter controls under `policy` on
+/// `route` until `host.shutdown`
 /// resolves, forwarding [`CapturedInput::ButtonDown`] and
 /// [`CapturedInput::ButtonUp`] edges to `host.sink`.
 ///
@@ -91,9 +114,10 @@ pub async fn run_keyboard_capture_session(
     route: DeviceRoute,
     wanted: watch::Receiver<BTreeMap<u16, ButtonId>>,
     host: CaptureHost<'_>,
+    policy: ControlCapturePolicy,
 ) -> Result<CaptureSessionOutcome, CaptureSessionFailure> {
     let shared = host.channel_for(&route)?;
-    let armed = arm_keyboard(&shared, wanted, host.registry).await?;
+    let armed = arm_keyboard(&shared, wanted, host.registry, policy).await?;
     Ok(run_capture(shared, armed, host).await)
 }
 
@@ -106,6 +130,7 @@ async fn arm_keyboard(
     shared: &SharedChannel,
     wanted: watch::Receiver<BTreeMap<u16, ButtonId>>,
     registry: &ChannelRegistry,
+    policy: ControlCapturePolicy,
 ) -> Result<ArmedKeys, CaptureSessionFailure> {
     let device = open_device(shared).await?;
     let info = device
@@ -130,6 +155,7 @@ async fn arm_keyboard(
         keys: Arc::default(),
         reporting_changes,
         wanted,
+        policy,
     };
     // Arming is the first change, from no key diverted to the wanted set.
     if let Err(error) = armed.retarget().await {
@@ -197,6 +223,7 @@ impl DivertChange {
         diverted: &BTreeMap<u16, ButtonId>,
         wanted: &BTreeMap<u16, ButtonId>,
         table: &[CtrlIdInfo],
+        policy: ControlCapturePolicy,
     ) -> Self {
         let mut change = Self {
             hand_back: diverted
@@ -209,7 +236,7 @@ impl DivertChange {
         for (&cid, &button) in wanted {
             if diverted.contains_key(&cid) {
                 change.keep.push((cid, button));
-            } else if can_divert(cid, table) {
+            } else if can_divert(cid, table, policy) {
                 change.divert.push((cid, button));
             }
         }
@@ -225,8 +252,8 @@ impl DivertChange {
 /// Whether a session may divert `cid` on the keyboard whose `0x1b04` control
 /// table is `table`. A key it may not divert is logged and left native, so
 /// support degrades per key.
-fn can_divert(cid: u16, table: &[CtrlIdInfo]) -> bool {
-    if is_reserved_keyboard_control(cid) {
+fn can_divert(cid: u16, table: &[CtrlIdInfo], policy: ControlCapturePolicy) -> bool {
+    if policy.is_reserved(cid) {
         warn!(
             cid = format_args!("{cid:#06x}"),
             "reserved control requested as a keyboard key — left native"
@@ -259,6 +286,7 @@ struct ArmedKeys {
     /// The keys the owner wants diverted. [`ArmedCapture::retarget`] marks a
     /// value seen when it applies it.
     wanted: watch::Receiver<BTreeMap<u16, ButtonId>>,
+    policy: ControlCapturePolicy,
 }
 
 impl ArmedKeys {
@@ -364,7 +392,7 @@ impl ArmedCapture for ArmedKeys {
 
     async fn retarget(&mut self) -> Result<(), CaptureError> {
         let wanted = self.wanted.borrow_and_update().clone();
-        let change = DivertChange::between(&self.keys().buttons, &wanted, &self.table);
+        let change = DivertChange::between(&self.keys().buttons, &wanted, &self.table, self.policy);
         if !change.writes_nothing() {
             debug!(
                 hand_back = change.hand_back.len(),
@@ -497,6 +525,32 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn presenter_policy_only_releases_the_top_tap_from_keyboard_reservations() {
+        let cids = [0x0050, 0x0051, 0x00d1, 0x00d2, 0x00d3, 0x00d8];
+        let table: Vec<_> = cids.into_iter().map(|cid| control(cid, true)).collect();
+        for (policy, allowed) in [
+            (ControlCapturePolicy::Keyboard, vec![0x00d8]),
+            (ControlCapturePolicy::Presenter, vec![0x0050, 0x00d8]),
+        ] {
+            let change = DivertChange::between(&keys(&[]), &keys(&cids), &table, policy);
+            assert_eq!(
+                change
+                    .divert
+                    .into_iter()
+                    .map(|(cid, _)| cid)
+                    .collect::<Vec<_>>(),
+                allowed
+            );
+            assert!(!can_divert(0xffff, &table, policy));
+            assert!(!can_divert(0x0050, &[control(0x0050, false)], policy));
+        }
+        assert_eq!(
+            ControlCapturePolicy::for_kind(openlogi_core::device::DeviceKind::Mouse),
+            None
+        );
+    }
+
     /// Only the keys that leave or join the set are written. A key the
     /// keyboard cannot divert, or a reserved one, never enters the change.
     #[test]
@@ -512,6 +566,7 @@ mod tests {
             &keys(&[0x00e7, 0x00e8]),
             &keys(&[0x00e7, 0x00e9, 0x00ea, 0x00d1, 0x00fe]),
             &table,
+            ControlCapturePolicy::Keyboard,
         );
         assert_eq!(
             change,
@@ -522,11 +577,30 @@ mod tests {
             }
         );
 
-        let unchanged = DivertChange::between(&keys(&[0x00e7]), &keys(&[0x00e7]), &table);
+        let unchanged = DivertChange::between(
+            &keys(&[0x00e7]),
+            &keys(&[0x00e7]),
+            &table,
+            ControlCapturePolicy::Keyboard,
+        );
         assert!(unchanged.writes_nothing());
-        assert!(DivertChange::between(&keys(&[]), &keys(&[]), &table).writes_nothing());
+        assert!(
+            DivertChange::between(
+                &keys(&[]),
+                &keys(&[]),
+                &table,
+                ControlCapturePolicy::Keyboard
+            )
+            .writes_nothing()
+        );
         assert_eq!(
-            DivertChange::between(&keys(&[0x00e7, 0x00e8]), &keys(&[]), &table).hand_back,
+            DivertChange::between(
+                &keys(&[0x00e7, 0x00e8]),
+                &keys(&[]),
+                &table,
+                ControlCapturePolicy::Keyboard
+            )
+            .hand_back,
             [0x00e7, 0x00e8]
         );
     }

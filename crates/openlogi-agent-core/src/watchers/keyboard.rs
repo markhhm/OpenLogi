@@ -42,9 +42,12 @@ use crate::runtime::{ActionDispatcher, HidppSessionId};
 /// that key in place as the app comes to the front, and hands it back when
 /// the app leaves; the keys that stay diverted are not written (#2140).
 /// Bindings that only change an already-diverted key's action hot-swap
-/// without touching firmware. Only a different route restarts the session.
+/// without touching firmware. Only a different route or safety policy restarts the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct KeyboardSpec {
+    /// Safety policy retained for the whole hardware session.
+    pub policy: openlogi_hid::ControlCapturePolicy,
     /// Current config namespace for actions from this keyboard. Settings
     /// adoption may change it without cycling an unchanged hardware target.
     pub config_key: String,
@@ -65,12 +68,14 @@ pub type SharedKeyboardSpec = watch::Receiver<Option<Arc<KeyboardSpec>>>;
 /// hardware session; everything else is in the [`KeyboardDispatchPlan`].
 #[derive(Clone, PartialEq, Eq)]
 struct KeyboardTarget {
+    policy: openlogi_hid::ControlCapturePolicy,
     route: DeviceRoute,
 }
 
 impl KeyboardTarget {
     fn for_spec(spec: &KeyboardSpec) -> Self {
         Self {
+            policy: spec.policy,
             route: spec.route.clone(),
         }
     }
@@ -607,6 +612,7 @@ fn spawn_session(
     let session_events = channels.events.clone();
     let done_id = id.clone();
     let route = target.route.clone();
+    let policy = target.policy;
     divert.send_replace(dispatch.divert.clone());
     let wanted = divert.subscribe();
     let device_io = channels.access.device_io.clone();
@@ -624,6 +630,7 @@ fn spawn_session(
                 registry: &session_registry,
                 device_io,
             },
+            policy,
         )
         .await
         {

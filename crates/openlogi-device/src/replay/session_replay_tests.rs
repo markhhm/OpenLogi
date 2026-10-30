@@ -102,6 +102,7 @@ async fn keyboard_capture_replay_restores_original_reporting_on_normal_shutdown(
         )]))
         .1,
         host,
+        crate::ControlCapturePolicy::Keyboard,
     );
 
     let (outcome, ()) = tokio::join!(capture, replay.stop_after_arm(shutdown));
@@ -249,6 +250,7 @@ async fn capture_replay_failed_wake_discovery_restores_before_retry() {
                         replay.route.clone(),
                         watch::channel(BTreeMap::from([(cid, ButtonId::control(cid))])).1,
                         host,
+                        crate::ControlCapturePolicy::Keyboard,
                     )
                     .await
                 } else {
@@ -437,7 +439,12 @@ impl ArmedReplay {
                 &reprog_reporting_change_request(last_diverted, KEYBOARD_ARMED_FLAGS),
             )
             .expect("the change's last write can be held");
-        let capture = run_keyboard_capture_session(self.route.clone(), wanted, host);
+        let capture = run_keyboard_capture_session(
+            self.route.clone(),
+            wanted,
+            host,
+            crate::ControlCapturePolicy::Keyboard,
+        );
         let change_then_stop = async {
             self.wireless_lookup.request_written().await;
             wanted_tx.send_replace(keyboard_keys(to));

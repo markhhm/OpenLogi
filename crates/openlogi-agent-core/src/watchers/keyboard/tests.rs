@@ -8,6 +8,7 @@ const SEARCH_KEY: ButtonId = ButtonId::control(0x00d4);
 
 fn target() -> KeyboardTarget {
     KeyboardTarget {
+        policy: openlogi_hid::ControlCapturePolicy::Keyboard,
         route: DeviceRoute::Direct {
             vendor_id: 0x046d,
             product_id: 0xc548,
@@ -52,6 +53,7 @@ async fn publication_and_receiver_request_change_wanted_state_immediately() {
     let access = ReceiverAccess::default();
     let mut requests = access.subscribe_requests();
     let published = KeyboardSpec {
+        policy: openlogi_hid::ControlCapturePolicy::Keyboard,
         config_key: "keyboard-a".to_owned(),
         route: target().route,
         wanted: dispatch(Action::MissionControl).divert,
@@ -184,6 +186,7 @@ fn target_changes_freeze_dispatch_until_teardown_finishes() {
     let mut session = live_session(7);
     let old_dispatch = session.dispatch().clone();
     let replacement = KeyboardTarget {
+        policy: openlogi_hid::ControlCapturePolicy::Keyboard,
         route: DeviceRoute::Direct {
             vendor_id: 0x046d,
             product_id: 0xc52b,
@@ -246,6 +249,7 @@ async fn recovery_manager_waits_for_control_events_and_shutdown_between_retries(
 
     for shutdown_requested in [false, true] {
         let (spec_tx, spec) = watch::channel(Some(Arc::new(KeyboardSpec {
+            policy: openlogi_hid::ControlCapturePolicy::Keyboard,
             config_key: "keyboard-a".to_owned(),
             route: target().route,
             wanted: dispatch(Action::MissionControl).divert,

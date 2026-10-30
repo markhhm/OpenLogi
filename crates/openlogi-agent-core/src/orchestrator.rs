@@ -27,9 +27,9 @@ use openlogi_core::device::{
 use openlogi_core::device_order::{DeviceIdentity, DeviceStableId, PhysicalDeviceKey};
 use openlogi_hid::{
     BacklightChange, BacklightState, CaptureChannelSlot, ChannelPool, ChannelRegistry,
-    DeviceIoGate, DeviceRoute, DisableKeysMask, Dpi, EasySwitchHosts, FnLockState,
-    ForceSensingInfo, HidppOperation, HostOs, PointerSpeed, ReportRate, ReportRateInfo, WriteError,
-    commands_for_light_settings, is_reserved_keyboard_control,
+    ControlCapturePolicy, DeviceIoGate, DeviceRoute, DisableKeysMask, Dpi, EasySwitchHosts,
+    FnLockState, ForceSensingInfo, HidppOperation, HostOs, PointerSpeed, ReportRate,
+    ReportRateInfo, WriteError, commands_for_light_settings,
 };
 #[cfg(test)]
 use openlogi_ipc::ChosenLight;
@@ -863,6 +863,7 @@ impl Orchestrator {
     }
 
     fn control_spec_for(&self, kind: DeviceKind) -> Option<KeyboardSpec> {
+        let policy = ControlCapturePolicy::for_kind(kind)?;
         let candidates: Vec<KeyboardCandidate<'_>> = self
             .devices
             .iter()
@@ -883,7 +884,7 @@ impl Orchestrator {
                         bindings.entry(button).or_insert(binding);
                     }
                 }
-                let divert = keyboard_divert_set(bindings.keys().copied());
+                let divert = control_divert_set(policy, bindings.keys().copied());
                 KeyboardCandidate {
                     dev,
                     bindings,
@@ -903,6 +904,7 @@ impl Orchestrator {
             );
         }
         Some(KeyboardSpec {
+            policy,
             config_key: chosen.dev.config_key.clone(),
             route: chosen.dev.route.clone()?,
             wanted: chosen.divert.wanted.clone(),
@@ -2139,8 +2141,12 @@ struct KeyboardDivertSet {
 /// even as
 /// [`openlogi_core::binding::Action::None`] (which means "suppress this key," not "leave native"):
 /// `button_bindings_for` seeds no default for a [`ButtonId::Control`], so
-/// presence here is always an explicit user choice (#1747).
-fn keyboard_divert_set(buttons: impl IntoIterator<Item = ButtonId>) -> KeyboardDivertSet {
+/// presence for keyboards is an explicit choice (#1747); presenters also carry
+/// the defaults seeded by `control_spec_for`.
+fn control_divert_set(
+    policy: ControlCapturePolicy,
+    buttons: impl IntoIterator<Item = ButtonId>,
+) -> KeyboardDivertSet {
     let mut set = KeyboardDivertSet::default();
     for button in buttons {
         let Some(cid) = button.cid().map(openlogi_core::binding::Cid::raw) else {
@@ -2151,7 +2157,7 @@ fn keyboard_divert_set(buttons: impl IntoIterator<Item = ButtonId>) -> KeyboardD
         // even to `Action::None`, which means "suppress", not "leave
         // native" (#1747). Only a key truly absent from the stored config
         // is left on its firmware function.
-        if is_reserved_keyboard_control(cid) {
+        if policy.is_reserved(cid) {
             set.reserved.push(cid);
         } else {
             set.wanted.insert(cid, button);
@@ -2166,14 +2172,14 @@ fn keyboard_divert_set(buttons: impl IntoIterator<Item = ButtonId>) -> KeyboardD
 /// device-wide binding does.
 fn binds_keys_in_some_profile(config: &Config, config_key: &str) -> bool {
     let device_wide = config.effective_bindings(config_key, None);
-    !keyboard_divert_set(device_wide.into_keys())
+    !control_divert_set(ControlCapturePolicy::Keyboard, device_wide.into_keys())
         .wanted
         .is_empty()
         || config
             .app_profiles(config_key)
             .filter_map(|app| config.per_app_overrides(config_key, app))
             .any(|overrides| {
-                !keyboard_divert_set(overrides.keys().copied())
+                !control_divert_set(ControlCapturePolicy::Keyboard, overrides.keys().copied())
                     .wanted
                     .is_empty()
             })
