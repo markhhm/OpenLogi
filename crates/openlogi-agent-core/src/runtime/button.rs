@@ -177,6 +177,7 @@ pub(crate) struct ActivePress {
     token: PressToken,
     behavior: PressBehavior,
     target: ActionDispatchTarget,
+    pressed_at: Instant,
 }
 
 /// Runtime-only state of the action semantics attached to one active press.
@@ -186,6 +187,8 @@ enum PressBehavior {
     LifecycleOnly,
     /// Existing behavior: fire once when the press starts.
     Immediate(Action),
+    /// Firmware promoted the second tap; consume this entire physical hold.
+    PresenterTapConsumed,
     /// Wait for either release or the threshold, whichever occurs first.
     LongPressPending {
         short: Action,
@@ -222,6 +225,7 @@ impl PressBehavior {
         match self {
             Self::LongPressPending { deadline, .. } => Some(*deadline),
             Self::LifecycleOnly
+            | Self::PresenterTapConsumed
             | Self::Immediate(_)
             | Self::LongPressFired
             | Self::WheelHoldPending { .. }
@@ -233,6 +237,7 @@ impl PressBehavior {
         match self {
             Self::Immediate(action) => Some(action),
             Self::LifecycleOnly
+            | Self::PresenterTapConsumed
             | Self::LongPressPending { .. }
             | Self::LongPressFired
             | Self::WheelHoldPending { .. }
@@ -245,6 +250,7 @@ impl PressBehavior {
             Self::LongPressPending { short, .. } => Some(short),
             Self::WheelHoldPending { click } => Some(click),
             Self::LifecycleOnly
+            | Self::PresenterTapConsumed
             | Self::Immediate(_)
             | Self::LongPressFired
             | Self::WheelHoldScrolled => None,
@@ -298,6 +304,11 @@ impl ActivePress {
         matches!(self.token.key.source, ButtonSource::Hidpp(_))
             && self.control() == &PressControl::Button(ButtonId::control(PRESENTER_TAP_CID))
             && self.behavior.start_action() == Some(&Action::Spotlight)
+    }
+
+    fn is_presenter_hold(&self) -> bool {
+        matches!(self.token.key.source, ButtonSource::Hidpp(_))
+            && self.control() == &PressControl::Button(ButtonId::control(PRESENTER_HOLD_CID))
     }
 
     pub(crate) fn target(&self) -> ActionDispatchTarget {
@@ -394,9 +405,7 @@ struct ButtonState {
 
 impl ButtonState {
     fn press(&mut self, press: ActivePress) -> Option<ActivePress> {
-        let top_hold = matches!(press.token.key.source, ButtonSource::Hidpp(_))
-            && press.control() == &PressControl::Button(ButtonId::control(PRESENTER_HOLD_CID));
-        if (top_hold
+        if (press.is_presenter_hold()
             || press.start_action() == Some(&Action::Spotlight)
             || self.active.contains_key(&press.token.key))
             && let Some(taps) = self.presenter_taps.get_mut(&press.token.key.source)
@@ -404,6 +413,24 @@ impl ButtonState {
             taps.cancel();
         }
         self.active.insert(press.token.key.clone(), press)
+    }
+
+    fn consume_presenter_hold(&mut self, press: &mut ActivePress) -> Option<TapEffect> {
+        if !press.is_presenter_hold() || press.start_action() != Some(&Action::Spotlight) {
+            return None;
+        }
+        if let Some(active) = self.active.get(&press.token.key) {
+            if active.behavior == PressBehavior::PresenterTapConsumed {
+                press.behavior = PressBehavior::PresenterTapConsumed;
+            }
+            return None;
+        }
+        let effect = self
+            .presenter_taps
+            .get_mut(&press.token.key.source)?
+            .hold(press.pressed_at)?;
+        press.behavior = PressBehavior::PresenterTapConsumed;
+        Some(effect)
     }
 
     fn release(&mut self, key: &PressKey) -> Option<ActivePress> {
@@ -586,6 +613,7 @@ impl ButtonInputHandle {
             PressBehavior::Immediate(action.clone()),
             generation,
             target,
+            Instant::now(),
         );
         let token = press.token.clone();
         self.try_input(generation, ButtonInput::Down(press))
@@ -642,11 +670,13 @@ impl ButtonInputHandle {
         target: ActionDispatchTarget,
     ) -> bool {
         let generation = self.generation.load(Ordering::Acquire);
+        let pressed_at = Instant::now();
         let press = self.new_press(
             PressKey::new(ButtonSource::Hidpp(session.clone()), button),
-            PressBehavior::new(binding, Instant::now()),
+            PressBehavior::new(binding, pressed_at),
             generation,
             target,
+            pressed_at,
         );
         self.try_input(generation, ButtonInput::Pulse(press))
     }
@@ -710,11 +740,13 @@ impl ButtonInputHandle {
         target: ActionDispatchTarget,
     ) -> Option<PressToken> {
         let generation = self.generation.load(Ordering::Acquire);
+        let pressed_at = Instant::now();
         let press = self.new_press(
             PressKey::new(source, button),
-            PressBehavior::new(binding, Instant::now()),
+            PressBehavior::new(binding, pressed_at),
             generation,
             target,
+            pressed_at,
         );
         let token = press.token.clone();
         self.try_input(generation, ButtonInput::Down(press))
@@ -738,6 +770,7 @@ impl ButtonInputHandle {
         behavior: PressBehavior,
         generation: u64,
         target: ActionDispatchTarget,
+        pressed_at: Instant,
     ) -> ActivePress {
         let id = PressId(self.next_press.fetch_add(1, Ordering::Relaxed));
         ActivePress {
@@ -748,6 +781,7 @@ impl ButtonInputHandle {
             },
             behavior,
             target,
+            pressed_at,
         }
     }
 

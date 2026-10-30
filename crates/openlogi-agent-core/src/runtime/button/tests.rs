@@ -11,6 +11,7 @@ fn hook_press(id: u64, button: ButtonId) -> ActivePress {
         token: PressToken::hook_for_test(id, button),
         behavior: PressBehavior::Immediate(Action::Copy),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at: Instant::now(),
     }
 }
 
@@ -23,10 +24,12 @@ fn wheel_hold(click: Action) -> Binding {
 }
 
 fn hook_press_bound(id: u64, binding: &Binding) -> ActivePress {
+    let pressed_at = Instant::now();
     ActivePress {
         token: PressToken::hook_for_test(id, ButtonId::Back),
-        behavior: PressBehavior::new(Some(binding), Instant::now()),
+        behavior: PressBehavior::new(Some(binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at,
     }
 }
 
@@ -211,6 +214,7 @@ fn cancellation_is_scoped_to_one_session() {
         },
         behavior: PressBehavior::LifecycleOnly,
         target: ActionDispatchTarget::Keyboard,
+        pressed_at: Instant::now(),
     };
     let second = ActivePress {
         token: PressToken {
@@ -220,6 +224,7 @@ fn cancellation_is_scoped_to_one_session() {
         },
         behavior: PressBehavior::LifecycleOnly,
         target: ActionDispatchTarget::Keyboard,
+        pressed_at: Instant::now(),
     };
     state.press(first.clone());
     state.press(second.clone());
@@ -243,6 +248,7 @@ fn hook_cancellation_leaves_hidpp_presses_active() {
         },
         behavior: PressBehavior::LifecycleOnly,
         target: ActionDispatchTarget::Keyboard,
+        pressed_at: Instant::now(),
     };
     state.press(hook.clone());
     state.press(hidpp.clone());
@@ -634,6 +640,7 @@ fn release_before_long_press_threshold_fires_only_the_short_action() {
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at,
     };
     state.press(press.clone());
     let mut events = Vec::new();
@@ -673,6 +680,7 @@ fn threshold_fires_long_once_and_suppresses_short_on_release() {
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at,
     };
     state.press(press.clone());
     let mut events = Vec::new();
@@ -722,6 +730,7 @@ fn cancellation_never_fires_a_pending_short_or_long_action() {
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at,
     };
     state.press(press);
     let mut events = Vec::new();
@@ -833,6 +842,7 @@ fn the_worker_waits_only_for_the_earliest_pending_long_press_threshold() {
         token: PressToken::hook_for_test(id, button),
         behavior: PressBehavior::new(Some(&binding), at),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at: at,
     };
     let mut state = ButtonState::default();
     assert_eq!(state.next_deadline(), None, "an idle worker has no timer");
@@ -1005,6 +1015,7 @@ fn overdue_long_press_precedes_unrelated_queued_actions() {
         token: PressToken::hook_for_test(1, ButtonId::Back),
         behavior: PressBehavior::new(Some(&binding), pressed_at),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at,
     };
     state.press(press.clone());
     commands
@@ -1067,6 +1078,7 @@ fn continuous_commands_cannot_starve_a_long_press_deadline() {
                 token: PressToken::hook_for_test(1, ButtonId::Back),
                 behavior: PressBehavior::new(Some(&binding), pressed_at),
                 target: ActionDispatchTarget::Keyboard,
+                pressed_at,
             }),
         })
         .expect("test queue should accept the press");
@@ -1305,6 +1317,7 @@ fn presenter_press(session: &HidppSessionId, id: u64, cid: u16) -> ActivePress {
         },
         behavior: PressBehavior::Immediate(Action::Spotlight),
         target: ActionDispatchTarget::Keyboard,
+        pressed_at: Instant::now(),
     }
 }
 
@@ -1395,6 +1408,186 @@ fn presenter_double_tap_cycles_but_boundary_taps_replay_individually() {
 }
 
 #[test]
+fn presenter_promoted_hold_cycles_and_consumes_the_whole_press() {
+    let session = HidppSessionId::with_epoch("presenter", 1);
+    let mut state = ButtonState::default();
+    let mut events = Vec::new();
+    let now = Instant::now();
+    presenter_tap(&mut state, &session, 1, now, &mut events);
+    let mut hold = presenter_press(&session, 2, PRESENTER_HOLD_CID);
+    hold.pressed_at = now + Duration::from_millis(400);
+    process_input(&mut state, ButtonInput::Down(hold.clone()), &mut |event| {
+        events.push(event);
+    });
+    assert_eq!(tap_effects(&events), [TapEffect::CyclePresenterMode]);
+    assert!(state.next_deadline().is_none());
+    let mut repeated = hold.clone();
+    repeated.token.id = PressId(3);
+    repeated.pressed_at += Duration::from_millis(1);
+    process_input(&mut state, ButtonInput::Down(repeated), &mut |event| {
+        events.push(event);
+    });
+    process_input(
+        &mut state,
+        ButtonInput::Up {
+            key: hold.token.key,
+            released_at: now + Duration::from_millis(1500),
+        },
+        &mut |event| events.push(event),
+    );
+    assert!(events.iter().all(|event| match event {
+        ButtonRuntimeEvent::Started(press) => press.start_action().is_none(),
+        ButtonRuntimeEvent::Triggered { .. } => false,
+        _ => true,
+    }));
+    assert_eq!(tap_effects(&events), [TapEffect::CyclePresenterMode]);
+    assert!(state.active.is_empty());
+    let count = events.len();
+    process_input(
+        &mut state,
+        ButtonInput::Up {
+            key: presenter_press(&session, 3, PRESENTER_HOLD_CID).token.key,
+            released_at: now + Duration::from_secs(2),
+        },
+        &mut |event| events.push(event),
+    );
+    state.expire_presenter_taps(now + Duration::from_secs(2), &mut |event| {
+        events.push(event);
+    });
+    assert_eq!(
+        events.len(),
+        count,
+        "release and expiry cannot replay the consumed hold"
+    );
+    let mut later = presenter_press(&session, 4, PRESENTER_HOLD_CID);
+    later.pressed_at = now + Duration::from_secs(3);
+    process_input(&mut state, ButtonInput::Down(later.clone()), &mut |event| {
+        events.push(event);
+    });
+    assert!(
+        matches!(events.last(), Some(ButtonRuntimeEvent::Started(press)) if press.start_action() == Some(&Action::Spotlight))
+    );
+    process_input(
+        &mut state,
+        ButtonInput::Up {
+            key: later.token.key,
+            released_at: now + Duration::from_secs(4),
+        },
+        &mut |event| events.push(event),
+    );
+    assert!(
+        matches!(events.last(), Some(ButtonRuntimeEvent::Ended { press, reason: EndReason::Released }) if press.start_action() == Some(&Action::Spotlight))
+    );
+}
+
+#[test]
+fn presenter_hold_pending_and_deadline_transition_table() {
+    let session = HidppSessionId::with_epoch("presenter", 1);
+    for pending in [false, true] {
+        for boundary in ["before", "at", "after"] {
+            let now = Instant::now();
+            let mut state = ButtonState::default();
+            let mut events = Vec::new();
+            presenter_tap(&mut state, &session, 1, now, &mut events);
+            let deadline = state.next_deadline().unwrap();
+            if !pending {
+                state.cancel_source(&ButtonSource::Hidpp(session.clone()));
+            }
+            let mut hold = presenter_press(&session, 2, PRESENTER_HOLD_CID);
+            hold.pressed_at = match boundary {
+                "before" => deadline.checked_sub(Duration::from_nanos(1)).unwrap(),
+                "at" => deadline,
+                _ => deadline + Duration::from_nanos(1),
+            };
+            process_input(&mut state, ButtonInput::Down(hold.clone()), &mut |event| {
+                events.push(event);
+            });
+            let consumed = pending && boundary == "before";
+            assert_eq!(
+                tap_effects(&events),
+                if consumed {
+                    vec![TapEffect::CyclePresenterMode]
+                } else {
+                    Vec::new()
+                },
+                "pending={pending}, boundary={boundary}"
+            );
+            let ButtonRuntimeEvent::Started(started) = events.last().unwrap() else {
+                panic!("the hold must retain its balanced lifecycle");
+            };
+            assert_eq!(
+                started.start_action(),
+                (!consumed).then_some(&Action::Spotlight)
+            );
+            let effects = tap_effects(&events);
+            process_input(
+                &mut state,
+                ButtonInput::Up {
+                    key: hold.token.key,
+                    released_at: deadline + Duration::from_secs(2),
+                },
+                &mut |event| events.push(event),
+            );
+            state.expire_presenter_taps(deadline + Duration::from_secs(2), &mut |event| {
+                events.push(event);
+            });
+            assert_eq!(tap_effects(&events), effects, "release owes no tap replay");
+            assert!(triggered(&events).is_empty());
+            assert!(state.active.is_empty());
+            assert!(state.next_deadline().is_none());
+        }
+    }
+}
+
+#[test]
+fn presenter_promoted_hold_respects_source_and_binding() {
+    let first = HidppSessionId::with_epoch("presenter", 1);
+    let second = HidppSessionId::with_epoch("presenter", 2);
+    for same_source in [false, true] {
+        for remapped in [false, true] {
+            let mut state = ButtonState::default();
+            let mut events = Vec::new();
+            let now = Instant::now();
+            presenter_tap(&mut state, &first, 1, now, &mut events);
+            let mut hold = presenter_press(
+                if same_source { &first } else { &second },
+                2,
+                PRESENTER_HOLD_CID,
+            );
+            hold.pressed_at = now + Duration::from_millis(400);
+            if remapped {
+                hold.behavior = PressBehavior::Immediate(Action::Copy);
+            }
+            process_input(&mut state, ButtonInput::Down(hold), &mut |event| {
+                events.push(event);
+            });
+            let consumed = same_source && !remapped;
+            assert_eq!(
+                tap_effects(&events),
+                if consumed {
+                    vec![TapEffect::CyclePresenterMode]
+                } else {
+                    Vec::new()
+                }
+            );
+            let ButtonRuntimeEvent::Started(press) = events.last().unwrap() else {
+                panic!("the hold must start its lifecycle");
+            };
+            assert_eq!(
+                press.start_action(),
+                if consumed {
+                    None
+                } else if remapped {
+                    Some(&Action::Copy)
+                } else {
+                    Some(&Action::Spotlight)
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn presenter_taps_do_not_pair_across_capture_incarnations() {
     let first = HidppSessionId::with_epoch("presenter", 1);
     let second = HidppSessionId::with_epoch("presenter", 2);
@@ -1447,10 +1640,11 @@ fn presenter_duplicate_down_cancels_ambiguous_pending_taps() {
 }
 
 #[test]
-fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_taps() {
+fn presenter_queued_hold_and_cancellations_settle_before_overdue_replay() {
     let session = HidppSessionId::with_epoch("presenter", 1);
     for cancellation in [
         "hold",
+        "promoted_hold",
         "remapped_hold",
         "stale",
         "source",
@@ -1463,13 +1657,8 @@ fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_ta
         let (stop, shutdown) = mpsc::channel();
         let generation = AtomicU64::new(0);
         let mut observed_generation = 0;
-        presenter_tap(
-            &mut state,
-            &session,
-            1,
-            Instant::now().checked_sub(Duration::from_secs(1)).unwrap(),
-            &mut events,
-        );
+        let first_release = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+        presenter_tap(&mut state, &session, 1, first_release, &mut events);
         match cancellation {
             "hold" => commands
                 .send(ButtonCommand::Input {
@@ -1485,6 +1674,16 @@ fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_ta
             "remapped_hold" => {
                 let mut press = presenter_press(&session, 2, PRESENTER_HOLD_CID);
                 press.behavior = PressBehavior::Immediate(Action::Copy);
+                commands
+                    .send(ButtonCommand::Input {
+                        generation: 0,
+                        input: ButtonInput::Down(press),
+                    })
+                    .unwrap();
+            }
+            "promoted_hold" => {
+                let mut press = presenter_press(&session, 2, PRESENTER_HOLD_CID);
+                press.pressed_at = first_release + Duration::from_millis(400);
                 commands
                     .send(ButtonCommand::Input {
                         generation: 0,
@@ -1514,9 +1713,14 @@ fn presenter_queued_hold_source_loss_invalidation_and_shutdown_cancel_overdue_ta
             None,
             &mut |event| events.push(event),
         );
-        assert!(
-            tap_effects(&events).is_empty(),
-            "{cancellation} must beat overdue replay"
+        assert_eq!(
+            tap_effects(&events),
+            if cancellation == "promoted_hold" {
+                vec![TapEffect::CyclePresenterMode]
+            } else {
+                Vec::new()
+            },
+            "{cancellation} must settle before overdue replay"
         );
         assert!(state.next_deadline().is_none());
     }

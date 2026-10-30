@@ -268,7 +268,10 @@ pub(super) fn process_input(
     emit: &mut impl FnMut(ButtonRuntimeEvent),
 ) {
     match input {
-        ButtonInput::Down(press) => {
+        ButtonInput::Down(mut press) => {
+            if let Some(effect) = state.consume_presenter_hold(&mut press) {
+                emit(ButtonRuntimeEvent::PresenterTap(effect));
+            }
             if let Some(stale) = state.press(press.clone()) {
                 emit(ButtonRuntimeEvent::Ended {
                     press: stale,

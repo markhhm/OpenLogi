@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
-/// A single release waits this long for a second release.
-const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(300);
+// Firmware can promote the second tap to a hold 330–400 ms after the first release.
+const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(450);
 
 /// Output admitted by the top-button tap state machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +42,15 @@ impl PresenterTaps {
         }
     }
 
-    /// Cancel on hold, source loss or runtime invalidation, without replay.
+    /// A promoted second tap cycles within the window; other holds cancel replay.
+    pub(super) fn hold(&mut self, now: Instant) -> Option<TapEffect> {
+        self.deadline
+            .take()
+            .filter(|deadline| now < *deadline)
+            .map(|_| TapEffect::CyclePresenterMode)
+    }
+
+    /// Cancel on source loss or runtime invalidation, without replay.
     pub(super) fn cancel(&mut self) {
         self.deadline = None;
     }
@@ -70,7 +78,7 @@ mod tests {
                 DOUBLE_TAP_WINDOW,
                 DOUBLE_TAP_WINDOW + Duration::from_nanos(1),
             ] {
-                for input in ["release", "expire", "cancel"] {
+                for input in ["release", "hold", "expire", "cancel"] {
                     let mut taps = PresenterTaps::default();
                     if pending {
                         assert_eq!(taps.release(start), None);
@@ -78,6 +86,7 @@ mod tests {
                     let now = start + elapsed;
                     let actual = match input {
                         "release" => taps.release(now),
+                        "hold" => taps.hold(now),
                         "expire" => taps.expire(now),
                         _ => {
                             taps.cancel();
@@ -86,7 +95,9 @@ mod tests {
                     };
                     let expired = elapsed >= DOUBLE_TAP_WINDOW;
                     let (expected, next) = match (pending, expired, input) {
-                        (true, false, "release") => (Some(TapEffect::CyclePresenterMode), None),
+                        (true, false, "release" | "hold") => {
+                            (Some(TapEffect::CyclePresenterMode), None)
+                        }
                         (true, true, "release") => {
                             (Some(TapEffect::Click), Some(now + DOUBLE_TAP_WINDOW))
                         }
