@@ -3,6 +3,7 @@
 mod inject;
 #[cfg(target_os = "linux")]
 pub mod uinput;
+pub mod zoom;
 
 pub use inject::{
     DesktopSwitch, HeldChord, SYNTHETIC_EVENT_USER_DATA, SmoothScrollPhase, ax_navigate_browser,
