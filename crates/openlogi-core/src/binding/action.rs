@@ -223,6 +223,9 @@ pub enum Action {
     /// press, as the Spotlight presenter's top button does in Logi Options+.
     /// The pointer itself keeps moving natively; the overlay only draws.
     ///
+    /// On the presenter top tap control, delay a single click or cycle the
+    /// hold mode on a double-click. Other controls hold the selected effect.
+    ///
     /// Only lifecycle-aware runtimes can show it: a dispatcher without a
     /// release context has nothing to end the highlight with, so it ignores
     /// this action.

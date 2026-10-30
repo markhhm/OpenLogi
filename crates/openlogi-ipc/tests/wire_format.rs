@@ -1229,3 +1229,16 @@ fn spotlight_highlight() {
     assert_wire(&shown, "020100");
     assert_wire(&AgentResponse::ObserveHighlight(shown), "2f020100");
 }
+
+#[test]
+fn presenter_modes_and_laser_are_appended() {
+    use openlogi_core::binding::PresenterMode;
+    assert_wire(&openlogi_ipc::HighlightStyle::Laser, "01");
+    for (mode, bytes) in [
+        (PresenterMode::Spotlight, "0100"),
+        (PresenterMode::Laser, "0101"),
+        (PresenterMode::Magnifier, "0102"),
+    ] {
+        assert_wire(&NoticeKind::PresenterMode(mode), bytes);
+    }
+}

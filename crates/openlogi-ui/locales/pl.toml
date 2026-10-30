@@ -765,3 +765,9 @@ scroll_lock_on = "Scroll Lock — włączony"
 scroll_lock_off = "Scroll Lock — wyłączony"
 secure_input_pauses_remapping_for_app = "Zmiana przypisań klawiszy wstrzymana · Bezpieczne wprowadzanie włączone dla %{app}"
 secure_input_pauses_remapping = "Zmiana przypisań klawiszy wstrzymana · Bezpieczne wprowadzanie włączone"
+
+[spotlight]
+mode_changed = "Presenter mode"
+mode_spotlight = "Spotlight"
+mode_laser = "Laser"
+mode_magnifier = "Magnifier"

@@ -154,7 +154,8 @@ pub use succession::Identity;
 ///      timer, five-second steps up to two hours.
 /// v42: `KeyboardUsage` accepts Insert (`0x49`) and Print Screen (`0x46`),
 ///      so a `KeyCombo` can carry a usage a v41 agent rejects.
-/// v43: `Action::Spotlight` and hold-to-highlight observation appended.
+/// v43: `Action::Spotlight`, hold-to-highlight observation, laser style and
+///      presenter-mode notices appended.
 pub const PROTOCOL_VERSION: u32 = 43;
 
 /// Environment variable through which the agent hands a supervised helper the
@@ -649,6 +650,8 @@ impl HighlightObservation {
 pub enum HighlightStyle {
     /// Dim the display outside a circle around the pointer.
     Spotlight,
+    /// A red dot and soft glow at the pointer, without dimming.
+    Laser,
 }
 
 /// A lock key that a keyboard reported turning on or off.
@@ -677,6 +680,8 @@ pub enum NoticeKind {
         /// The reading that made the battery low.
         battery: BatteryInfo,
     },
+    /// The new hold effect selected with the presenter top button.
+    PresenterMode(openlogi_core::binding::PresenterMode),
 }
 
 /// One notice the overlay is showing.

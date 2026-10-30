@@ -765,3 +765,9 @@ scroll_lock_on = "Scroll Lock er aktiveret"
 scroll_lock_off = "Scroll Lock er deaktiveret"
 secure_input_pauses_remapping_for_app = "Tasttildelinger sat på pause · Sikker indtastning er slået til for %{app}"
 secure_input_pauses_remapping = "Tasttildelinger sat på pause · Sikker indtastning er slået til"
+
+[spotlight]
+mode_changed = "Presenter mode"
+mode_spotlight = "Spotlight"
+mode_laser = "Laser"
+mode_magnifier = "Magnifier"

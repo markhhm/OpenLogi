@@ -125,8 +125,8 @@ pub fn default_binding_for(button: ButtonId) -> Binding {
 /// Only the Spotlight top button is captured; next/back stay native.
 #[must_use]
 pub fn default_presenter_bindings() -> BTreeMap<ButtonId, Binding> {
-    BTreeMap::from([(
-        ButtonId::control(0x00d8),
-        Binding::Single(Action::Spotlight),
-    )])
+    [0x0050, 0x00d8]
+        .into_iter()
+        .map(|cid| (ButtonId::control(cid), Binding::Single(Action::Spotlight)))
+        .collect()
 }

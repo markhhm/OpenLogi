@@ -169,6 +169,10 @@ pub(crate) struct NoticeText {
 /// The text of one notice, in the active locale.
 pub(crate) fn notice_text(kind: &NoticeKind) -> NoticeText {
     match kind {
+        NoticeKind::PresenterMode(mode) => NoticeText {
+            title: rust_i18n::t!(mode.translation_key()).into_owned().into(),
+            detail: rust_i18n::t!("spotlight.mode_changed").into_owned().into(),
+        },
         NoticeKind::LowBattery {
             name,
             kind,

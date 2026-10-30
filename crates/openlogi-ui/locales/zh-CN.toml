@@ -765,3 +765,9 @@ scroll_lock_on = "Scroll Lock 开"
 scroll_lock_off = "Scroll Lock 关"
 secure_input_pauses_remapping_for_app = "按键重映射已暂停 · %{app} 的安全输入已开启"
 secure_input_pauses_remapping = "按键重映射已暂停 · 安全输入已开启"
+
+[spotlight]
+mode_changed = "Presenter mode"
+mode_spotlight = "Spotlight"
+mode_laser = "Laser"
+mode_magnifier = "Magnifier"
