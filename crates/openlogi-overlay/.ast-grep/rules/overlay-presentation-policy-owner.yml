@@ -1,0 +1,11 @@
+id: overlay-presentation-policy-owner
+language: rust
+severity: error
+message: Use openlogi-overlay platform::presentation::raise; the captured-presentation window policy has one owner.
+files:
+  - crates/**/*.rs
+ignores:
+  - crates/openlogi-overlay/src/platform/presentation.rs
+rule:
+  kind: identifier
+  regex: '^CGShieldingWindowLevel$'

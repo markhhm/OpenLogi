@@ -166,3 +166,17 @@ fn a_nameless_device_is_named_by_its_kind_and_a_level_only_reading_shows_no_perc
         SharedString::from("Mouse")
     );
 }
+
+#[test]
+fn mode_notice_names_each_hold_effect() {
+    use openlogi_core::binding::PresenterMode;
+    for (mode, name) in [
+        (PresenterMode::Spotlight, "Spotlight"),
+        (PresenterMode::Laser, "Laser"),
+        (PresenterMode::Magnifier, "Magnifier"),
+    ] {
+        let text = notice_text(&NoticeKind::PresenterMode(mode));
+        assert_eq!(text.title.as_ref(), name);
+        assert_eq!(text.detail.as_ref(), "Presenter mode");
+    }
+}

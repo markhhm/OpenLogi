@@ -1,0 +1,19 @@
+id: overlay-presenter-notice-placement
+language: rust
+severity: error
+message: Preserve GPUI's style mask for presenter notices; platform::presentation::raise owns this path, while legacy placement calls configure_windows and can re-enter the borrowed App.
+files:
+  - crates/openlogi-overlay/src/notice.rs
+  - crates/openlogi-overlay/src/platform/presentation.rs
+rule:
+  any:
+    - pattern: $WINDOW.setStyleMask($MASK)
+    - kind: expression_statement
+      has:
+        pattern: $PLACEMENT.show($WINDOW)
+        stopBy: end
+      precedes:
+        has:
+          pattern: crate::platform::presentation::raise($WINDOW)
+          stopBy: end
+        stopBy: end

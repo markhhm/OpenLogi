@@ -12,4 +12,5 @@ ruleDirs:
   - crates/openlogi-hook/.ast-grep/rules
   - crates/openlogi-inject/.ast-grep/rules
   - crates/openlogi-ipc/.ast-grep/rules
+  - crates/openlogi-overlay/.ast-grep/rules
   - xtask/.ast-grep/rules

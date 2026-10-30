@@ -231,9 +231,21 @@ pub(crate) fn present(cx: &mut gpui::App, shelf: &Rc<RefCell<NoticeShelf>>, card
     };
     let placed = handle
         .update(cx, |_, window, cx| {
-            // As for the ring: native placement resizes the window inside
-            // this update, so resync GPUI's viewport and scale.
-            placement.show(window).map(|()| window.bounds_changed(cx))
+            #[cfg(target_os = "macos")]
+            if cards
+                .iter()
+                .any(|card| matches!(card.kind, NoticeKind::PresenterMode(_)))
+            {
+                // Legacy placement overwrites GPUI's style mask and re-enters its resize callback.
+                crate::platform::presentation::raise(window)?;
+            } else {
+                placement.show(window)?;
+            }
+            #[cfg(not(target_os = "macos"))]
+            placement.show(window)?;
+            // Native placement can resize the window; resync GPUI's viewport and scale.
+            window.bounds_changed(cx);
+            Ok(())
         })
         .and_then(std::convert::identity);
     if let Err(error) = placed {
