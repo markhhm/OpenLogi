@@ -175,23 +175,25 @@ impl InputServices {
     }
 }
 
-/// Graceful-shutdown handles for the three firmware-owning HID++ managers.
+/// Graceful-shutdown handles for the firmware-owning HID++ managers.
 pub(crate) struct HidppWatcherHandles {
     gesture: WatcherHandle,
     host_switch: WatcherHandle,
     keyboard: WatcherHandle,
+    presenter: WatcherHandle,
 }
 
 impl HidppWatcherHandles {
     /// Stop all managers concurrently and confirm firmware teardown. The
     /// lifecycle retains this future and owns the terminal-exit deadline.
     pub(crate) async fn stop_and_wait(self) -> bool {
-        let (gesture, host_switch, keyboard) = tokio::join!(
+        let (gesture, host_switch, keyboard, presenter) = tokio::join!(
             self.gesture.stop_and_wait("gesture"),
             self.host_switch.stop_and_wait("host-switch"),
             self.keyboard.stop_and_wait("keyboard"),
+            self.presenter.stop_and_wait("presenter"),
         );
-        [gesture, host_switch, keyboard]
+        [gesture, host_switch, keyboard, presenter]
             .into_iter()
             .all(StopOutcome::is_stopped)
     }
@@ -219,14 +221,22 @@ pub(crate) fn spawn_hidpp_watchers(
         shared.device_io.clone(),
     );
     let keyboard = watchers::keyboard::spawn(
+        "openlogi-keyboard-watcher",
         &shared.keyboard_spec,
         shared.keyboard_access(),
+        inputs.dispatcher.clone(),
+    );
+    let presenter = watchers::keyboard::spawn(
+        "openlogi-presenter-watcher",
+        &shared.presenter_spec,
+        shared.presenter_access(),
         inputs.dispatcher.clone(),
     );
     HidppWatcherHandles {
         gesture,
         host_switch,
         keyboard,
+        presenter,
     }
 }
 

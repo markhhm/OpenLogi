@@ -1,4 +1,4 @@
-//! Background HID++ key-capture watcher for a bound keyboard.
+//! Background HID++ control capture for a bound keyboard or presenter.
 //!
 //! Runs [`openlogi_hid::run_keyboard_capture_session`] on a dedicated thread
 //! for the keyboard the orchestrator publishes in [`SharedKeyboardSpec`],
@@ -20,7 +20,7 @@ use openlogi_hid::{
     PendingCaptureRestore, run_keyboard_capture_session,
 };
 use tokio::sync::{mpsc, oneshot, watch};
-use tracing::{debug, info, warn};
+use tracing::{Instrument as _, debug, info, warn};
 
 use super::capture_manager::{self, CaptureManager, ManagerInputs, PendingRestore};
 use super::capture_session::{
@@ -131,13 +131,14 @@ struct KeyboardManagerContext {
 /// dispatches each captured key press.
 #[must_use]
 pub fn spawn(
+    name: &'static str,
     spec: &SharedKeyboardSpec,
     access: DeviceAccess,
     dispatcher: ActionDispatcher,
 ) -> WatcherHandle {
     let spec = spec.clone();
     let receiver_requests = access.receiver_access.subscribe_requests();
-    WatcherHandle::spawn("openlogi-keyboard-watcher", move |shutdown| {
+    WatcherHandle::spawn(name, move |shutdown| {
         manage(KeyboardManagerContext {
             spec,
             access,
@@ -145,6 +146,7 @@ pub fn spawn(
             dispatcher,
             shutdown,
         })
+        .instrument(tracing::info_span!("control_capture", watcher = name))
     })
 }
 

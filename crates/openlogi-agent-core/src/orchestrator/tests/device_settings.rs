@@ -824,3 +824,150 @@ fn keyboard_spec_never_diverts_reserved_controls() {
         BTreeMap::from([(0x010a, ButtonId::control(0x010a))])
     );
 }
+
+fn presenter(key: &str, slot: u8, online: bool) -> AgentDevice {
+    let mut device = dev(key, slot, online);
+    device.kind = DeviceKind::Presenter;
+    device
+}
+
+#[test]
+fn presenter_spec_defaults_only_the_top_button_beside_a_bound_keyboard() {
+    let mut config = Config::default();
+    config.set_binding(
+        "kbd",
+        ButtonId::control(0x010a),
+        Binding::Single(Action::Copy),
+    );
+    let mut orch = orchestrator(config);
+    orch.devices = vec![keyboard("kbd", 1, true), presenter("spotlight", 2, true)];
+    orch.rebuild();
+    let spec = orch
+        .presenter_spec_for()
+        .expect("a fresh presenter has a default");
+    assert_eq!(
+        spec.wanted,
+        BTreeMap::from([(0x00d8, ButtonId::control(0x00d8))])
+    );
+    assert_eq!(
+        spec.bindings[&ButtonId::control(0x00d8)],
+        Binding::Single(Action::Spotlight)
+    );
+    assert_eq!(
+        orch.shared
+            .keyboard_spec
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .config_key,
+        "kbd"
+    );
+    assert_eq!(
+        orch.shared
+            .presenter_spec
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .config_key,
+        "spotlight"
+    );
+    assert!(!Arc::ptr_eq(
+        &orch.shared.keyboard_channel,
+        &orch.shared.presenter_channel
+    ));
+    let bluetooth = DeviceRoute::Direct {
+        vendor_id: 0x046d,
+        product_id: 0xb503,
+    };
+    orch.devices[1].route = Some(bluetooth.clone());
+    orch.rebuild();
+    assert_eq!(
+        orch.shared.presenter_spec.borrow().as_ref().unwrap().route,
+        bluetooth
+    );
+    assert_eq!(
+        orch.shared
+            .keyboard_spec
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .config_key,
+        "kbd"
+    );
+}
+
+#[test]
+fn presenter_spec_preserves_effective_overrides_including_do_nothing() {
+    let top = ButtonId::control(0x00d8);
+    let mut config = Config::default();
+    config.set_binding("spotlight", top, Binding::Single(Action::Copy));
+    config.set_per_app_binding("spotlight", "editor", top, Some(Action::None));
+    let mut orch = orchestrator(config);
+    orch.devices = vec![presenter("spotlight", 1, true)];
+    let normal = orch.presenter_spec_for().unwrap();
+    assert_eq!(normal.bindings[&top], Binding::Single(Action::Copy));
+    orch.set_current_app(Some(ForegroundApp::unnamed("editor".into())));
+    let editor = orch
+        .shared
+        .presenter_spec
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .clone();
+    assert_eq!(normal.route, editor.route);
+    assert_eq!(editor.bindings[&top], Binding::Single(Action::None));
+    assert_eq!(
+        editor.wanted, normal.wanted,
+        "suppressing is an explicit binding"
+    );
+}
+
+#[test]
+fn presenter_spec_prefers_online_devices_and_leaves_disabled_devices_native() {
+    let mut orch = orchestrator(Config::default());
+    orch.devices = vec![presenter("stale", 1, false), presenter("live", 2, true)];
+    assert_eq!(orch.presenter_spec_for().unwrap().config_key, "live");
+    orch.devices[1].online = false;
+    assert_eq!(orch.presenter_spec_for().unwrap().config_key, "stale");
+    for key in ["stale", "live"] {
+        orch.config.set_device_enabled(key, false);
+    }
+    orch.rebuild();
+    assert!(orch.shared.presenter_spec.borrow().is_none());
+    orch.config.set_device_enabled("live", true);
+    orch.devices[1].route = None;
+    assert!(orch.presenter_spec_for().is_none());
+}
+
+#[test]
+fn presenter_spec_releases_only_its_own_controls_from_its_mouse_capture_plan() {
+    let [back, other_back, _, _] = BACK_CIDS;
+    let mut config = Config::default();
+    config.set_binding("spotlight", ButtonId::Back, Binding::Single(Action::Copy));
+    config.set_binding(
+        "spotlight",
+        ButtonId::control(back),
+        Binding::Single(Action::Paste),
+    );
+    let mut orch = orchestrator(config);
+    orch.devices = vec![presenter("spotlight", 1, true), dev("mouse", 2, true)];
+    orch.rebuild();
+    let publication = orch.shared.capture_plans.borrow();
+    let plan = &publication.plans()[0];
+    assert!(
+        !plan
+            .target
+            .spec
+            .divert_buttons
+            .iter()
+            .any(|&(cid, _)| cid == back)
+    );
+    assert!(
+        plan.target
+            .spec
+            .divert_buttons
+            .iter()
+            .any(|&(cid, _)| cid == other_back)
+    );
+    assert_eq!(orch.presenter_spec_for().unwrap().route, plan.target.route);
+}

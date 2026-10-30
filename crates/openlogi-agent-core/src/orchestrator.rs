@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use openlogi_core::app::ForegroundApp;
-use openlogi_core::binding::{Binding, ButtonId};
+use openlogi_core::binding::{Binding, ButtonId, default_presenter_bindings};
 use openlogi_core::bindings::{button_bindings_for, oshook_gestures_for};
 use openlogi_core::config::{
     AppSettings, Config, ConfigRevision, LightSettings, MouseProfileTarget, canonical_device_key,
@@ -148,6 +148,10 @@ pub struct SharedHandles {
     /// The keyboard key-capture watcher's target + bindings, `None` while no
     /// online keyboard has bound keys.
     pub keyboard_spec: SharedKeyboardSpec,
+    /// Independent presenter capture so a keyboard keeps its own session.
+    pub presenter_spec: SharedKeyboardSpec,
+    /// The presenter's capture channel, independent of keyboard Fn-lock I/O.
+    pub presenter_channel: CaptureChannelSlot,
     /// The keyboard capture session's open channel, reused by Fn-lock writes
     /// (the mouse-oriented [`Self::capture_channel`] points elsewhere).
     pub keyboard_channel: CaptureChannelSlot,
@@ -210,6 +214,12 @@ impl SharedHandles {
     #[must_use]
     pub fn keyboard_access(&self) -> DeviceAccess {
         self.access_through(&self.keyboard_channel)
+    }
+
+    /// Device access through the presenter's independent capture channel.
+    #[must_use]
+    pub fn presenter_access(&self) -> DeviceAccess {
+        self.access_through(&self.presenter_channel)
     }
 
     fn access_through(&self, channel: &CaptureChannelSlot) -> DeviceAccess {
@@ -591,6 +601,7 @@ pub struct Orchestrator {
     /// `shared`, keeping the orchestrator's single-writer contract structural.
     capture_plans_tx: watch::Sender<Arc<CapturePublication>>,
     keyboard_spec_tx: watch::Sender<Option<Arc<KeyboardSpec>>>,
+    presenter_spec_tx: watch::Sender<Option<Arc<KeyboardSpec>>>,
     host_switch_links_tx: watch::Sender<Arc<Vec<HostSwitchLink>>>,
     watched_lights_tx: watch::Sender<Arc<Vec<WatchedLight>>>,
     shared: SharedHandles,
@@ -640,6 +651,7 @@ impl Orchestrator {
         let (capture_plans_tx, capture_plans) =
             watch::channel(Arc::new(CapturePublication::default()));
         let (keyboard_spec_tx, keyboard_spec) = watch::channel(None);
+        let (presenter_spec_tx, presenter_spec) = watch::channel(None);
         let (host_switch_links_tx, host_switch_links) = watch::channel(Arc::new(Vec::new()));
         let (watched_lights_tx, watched_lights) = watch::channel(Arc::new(Vec::new()));
         openlogi_inject::set_desktop_switch(desktop_switch(&config.app_settings));
@@ -658,6 +670,8 @@ impl Orchestrator {
             capture_channel: Arc::new(RwLock::new(None)),
             channel_registry: ChannelRegistry::default(),
             keyboard_spec,
+            presenter_spec,
+            presenter_channel: Arc::new(RwLock::new(None)),
             keyboard_channel: Arc::new(RwLock::new(None)),
             capture_rearm_generation: Arc::new(AtomicU64::new(0)),
             receiver_access: ReceiverAccess::default(),
@@ -702,6 +716,7 @@ impl Orchestrator {
             os_mouse_hook_available: false,
             capture_plans_tx,
             keyboard_spec_tx,
+            presenter_spec_tx,
             host_switch_links_tx,
             watched_lights_tx,
             shared,
@@ -839,18 +854,34 @@ impl Orchestrator {
     /// channel is to the always-present receiver — and re-arms diversion on
     /// the device's `0x1d4b` reconnection broadcast.
     fn keyboard_spec_for(&self) -> Option<KeyboardSpec> {
+        self.control_spec_for(DeviceKind::Keyboard)
+    }
+
+    fn presenter_spec_for(&self) -> Option<KeyboardSpec> {
+        self.control_spec_for(DeviceKind::Presenter)
+    }
+
+    fn control_spec_for(&self, kind: DeviceKind) -> Option<KeyboardSpec> {
         let candidates: Vec<KeyboardCandidate<'_>> = self
             .devices
             .iter()
-            .filter(|d| d.kind == DeviceKind::Keyboard && d.route.is_some())
+            .filter(|d| d.kind == kind && d.route.is_some())
             .filter(|d| self.config.device_enabled(&d.config_key))
-            .filter(|d| binds_keys_in_some_profile(&self.config, &d.config_key))
+            .filter(|d| {
+                kind == DeviceKind::Presenter
+                    || binds_keys_in_some_profile(&self.config, &d.config_key)
+            })
             .map(|dev| {
-                let bindings = button_bindings_for(
+                let mut bindings = button_bindings_for(
                     &self.config,
                     Some(&dev.config_key),
                     self.current_app.as_deref(),
                 );
+                if kind == DeviceKind::Presenter {
+                    for (button, binding) in default_presenter_bindings() {
+                        bindings.entry(button).or_insert(binding);
+                    }
+                }
                 let divert = keyboard_divert_set(bindings.keys().copied());
                 KeyboardCandidate {
                     dev,
@@ -934,6 +965,7 @@ impl Orchestrator {
             host_switch_links(&self.config, &self.devices),
         );
         publish_optional_arc_if_changed(&self.keyboard_spec_tx, self.keyboard_spec_for());
+        publish_optional_arc_if_changed(&self.presenter_spec_tx, self.presenter_spec_for());
         publish_arc_if_changed(&self.watched_lights_tx, self.watched_lights());
         self.publish_lights();
     }
@@ -1016,6 +1048,7 @@ impl Orchestrator {
     /// handoff has to follow the mouse after capture stops.
     fn capture_publication(&self) -> CapturePublication {
         let keyboard = self.keyboard_spec_for();
+        let presenter = self.presenter_spec_for();
         let mut plans = Vec::new();
         let mut routes = BTreeMap::new();
         for dev in &self.devices {
@@ -1033,11 +1066,12 @@ impl Orchestrator {
                 .get(&route)
                 .copied()
                 .unwrap_or(0);
-            let (app, pointer_target) = if dev.kind == DeviceKind::Keyboard {
-                (self.current_app.as_deref(), None)
-            } else {
-                self.mouse_context()
-            };
+            let (app, pointer_target) =
+                if matches!(dev.kind, DeviceKind::Keyboard | DeviceKind::Presenter) {
+                    (self.current_app.as_deref(), None)
+                } else {
+                    self.mouse_context()
+                };
             let mut plan = plan_for_device(
                 &self.config,
                 physical_key,
@@ -1051,11 +1085,13 @@ impl Orchestrator {
             plan.dispatch.invert_wheel = wheel_inverted(&self.config, dev);
             plan.target.spec.divert_main_wheel =
                 main_wheel_divert(&self.config, dev, self.os_mouse_hook_available);
-            if let Some(keyboard) = keyboard
-                .as_ref()
-                .filter(|keyboard| keyboard.route == plan.target.route)
+            for controls in [keyboard.as_ref(), presenter.as_ref()]
+                .into_iter()
+                .flatten()
             {
-                plan.release_controls(&keyboard.wanted);
+                if controls.route == plan.target.route {
+                    plan.release_controls(&controls.wanted);
+                }
             }
             plans.push(plan);
         }
