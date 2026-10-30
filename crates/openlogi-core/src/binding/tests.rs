@@ -471,6 +471,7 @@ fn persisted_action_variant_names_are_stable() {
         "ShowActionsRing",
         "ShowDesktop",
         "Sleep",
+        "Spotlight",
         "TapKeyHoldingModifiers",
         "TogglePrecisionMode",
         "ToggleSmartShift",
@@ -614,6 +615,23 @@ fn haptic_panel_defaults_to_opening_the_actions_ring() {
 }
 
 #[test]
+fn presenter_defaults_capture_only_the_spotlight_top_button() {
+    let defaults = default_presenter_bindings();
+    assert_eq!(
+        defaults.len(),
+        1,
+        "other presenter controls must stay native"
+    );
+    let top = ButtonId::control(0x00d8);
+    assert_eq!(
+        defaults.get(&top),
+        Some(&Binding::Single(Action::Spotlight))
+    );
+    assert_eq!(default_binding(top), Action::None);
+    assert_eq!(roundtrip(&Action::Spotlight), Action::Spotlight);
+}
+
+#[test]
 fn gesture_mode_includes_middle_click_but_excludes_primary_clicks_and_wheel_motion() {
     let supported: Vec<_> = ButtonId::ALL
         .into_iter()
@@ -737,6 +755,7 @@ fn power_user_and_device_side_actions_lower_to_the_expected_bucket() {
         Action::SetDpiPreset(2),
         Action::ToggleSmartShift,
         Action::ShowActionsRing,
+        Action::Spotlight,
     ] {
         assert_matches!(action.effect(), Effect::AgentSide);
     }

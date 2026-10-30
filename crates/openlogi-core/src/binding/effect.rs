@@ -266,7 +266,7 @@ impl Action {
             Action::VolumeDown => Effect::Media(MediaKey::VolumeDown),
             Action::MuteVolume => Effect::Media(MediaKey::Mute),
 
-            // DPI/SmartShift/precision mode/the Actions Ring/OpenApplication
+            // DPI/SmartShift/precision mode/the Actions Ring/Spotlight/OpenApplication
             // are all handled above (or beside) the injector — see
             // `Effect::AgentSide`.
             Action::CycleDpiPresets
@@ -274,6 +274,7 @@ impl Action {
             | Action::ToggleSmartShift
             | Action::TogglePrecisionMode
             | Action::ShowActionsRing
+            | Action::Spotlight
             | Action::OpenApplication(_) => Effect::AgentSide,
 
             Action::ScrollUp => Effect::Scroll { dx: 0, dy: 1 },

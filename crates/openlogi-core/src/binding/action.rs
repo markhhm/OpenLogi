@@ -219,6 +219,14 @@ pub enum Action {
     /// returns to the sensor's default DPI. A DPI LED (HID++ `0x1300`) is
     /// lit while the mode is on. Does nothing on other devices.
     TogglePrecisionMode,
+    /// Dim the screen around the pointer for the lifetime of the physical
+    /// press, as the Spotlight presenter's top button does in Logi Options+.
+    /// The pointer itself keeps moving natively; the overlay only draws.
+    ///
+    /// Only lifecycle-aware runtimes can show it: a dispatcher without a
+    /// release context has nothing to end the highlight with, so it ignores
+    /// this action.
+    Spotlight,
 }
 
 /// Which of a held chord's keys stay down for the lifetime of the press.
@@ -317,6 +325,7 @@ macro_rules! for_each_unit_action {
             CaptureRegion "Capture Region" "actions.capture_region" System Camera,
             Sleep "Sleep" "actions.sleep" System Monitor,
             ShowActionsRing "Actions Ring" "action_ring.actions_ring" System Grid,
+            Spotlight "Spotlight" "actions.spotlight" System Monitor,
             // Media
             PlayPause "Play / Pause" "actions.play_pause" Media Play,
             NextTrack "Next Track" "actions.next_track" Media NextTrack,

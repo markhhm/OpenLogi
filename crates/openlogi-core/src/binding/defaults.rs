@@ -1,5 +1,7 @@
 //! Default bindings for a fresh device / gesture map.
 
+use std::collections::BTreeMap;
+
 use super::action::Action;
 use super::button::ButtonId;
 use super::gesture::GestureDirection;
@@ -116,4 +118,15 @@ pub fn default_binding_for(button: ButtonId) -> Binding {
         ),
         other => Binding::Single(default_binding(other)),
     }
+}
+
+/// Presenter bindings used only where the effective config has no assignment.
+///
+/// Only the Spotlight top button is captured; next/back stay native.
+#[must_use]
+pub fn default_presenter_bindings() -> BTreeMap<ButtonId, Binding> {
+    BTreeMap::from([(
+        ButtonId::control(0x00d8),
+        Binding::Single(Action::Spotlight),
+    )])
 }
