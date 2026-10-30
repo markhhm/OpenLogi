@@ -177,6 +177,7 @@ async fn recovery_manager_waits_for_control_events_and_shutdown_between_retries(
             device_access.clone(),
             ring,
             crate::highlight::Highlight::default(),
+            tokio::sync::mpsc::unbounded_channel().0,
         )
         .unwrap();
         let mut scroll = ScrollRuntime::spawn(Arc::new(ScrollPreferences::new(
@@ -847,6 +848,7 @@ async fn a_pointer_only_plan_refresh_keeps_a_held_gesture() {
         device_access,
         ring,
         crate::highlight::Highlight::default(),
+        tokio::sync::mpsc::unbounded_channel().0,
     )
     .unwrap();
     let mut scroll = ScrollRuntime::spawn(Arc::new(ScrollPreferences::new(

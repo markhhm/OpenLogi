@@ -8,6 +8,7 @@
 mod button;
 pub mod hook;
 mod pointer;
+mod presenter_taps;
 pub mod scroll;
 
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use std::io;
 use std::sync::{Arc, Mutex, PoisonError, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
-use openlogi_core::binding::{Action, Binding, ButtonId};
+use openlogi_core::binding::{Action, Binding, ButtonId, PresenterMode};
 use tracing::{debug, info, warn};
 
 use self::button::{
@@ -286,19 +287,39 @@ struct ButtonEventHandler {
     executor: ActionExecutor,
     highlight: crate::highlight::Highlight,
     held: HeldShortcuts,
+    zoom: openlogi_inject::zoom::Zoom,
+    presenter_modes: tokio::sync::mpsc::UnboundedSender<PresenterMode>,
 }
 
 impl ButtonEventHandler {
-    fn new(executor: ActionExecutor, highlight: crate::highlight::Highlight) -> Self {
+    fn new(
+        executor: ActionExecutor,
+        highlight: crate::highlight::Highlight,
+        zoom: openlogi_inject::zoom::Zoom,
+        presenter_modes: tokio::sync::mpsc::UnboundedSender<PresenterMode>,
+    ) -> Self {
         Self {
             executor,
             highlight,
             held: HeldShortcuts::default(),
+            zoom,
+            presenter_modes,
         }
     }
 
     fn handle(&mut self, event: ButtonRuntimeEvent) {
         match event {
+            ButtonRuntimeEvent::PresenterTap(effect) => match effect {
+                presenter_taps::TapEffect::Click => self.executor.dispatch_to(
+                    &Action::LeftClick,
+                    None,
+                    ActionDispatchTarget::Keyboard,
+                ),
+                presenter_taps::TapEffect::CyclePresenterMode => {
+                    let mode = self.highlight.cycle();
+                    let _ = self.presenter_modes.send(mode);
+                }
+            },
             ButtonRuntimeEvent::Started(press) => {
                 if let Some(action) = press.start_action() {
                     self.start_action(press.token(), action, press.device_key(), press.target());
@@ -309,7 +330,8 @@ impl ButtonEventHandler {
             }
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
-                self.highlight.end(press.token());
+                let change = self.highlight.end(press.token());
+                self.apply_magnifier(change);
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {
                         PressControl::Button(button) => {
@@ -324,6 +346,14 @@ impl ButtonEventHandler {
         }
     }
 
+    fn apply_magnifier(&self, change: Option<crate::highlight::MagnifierChange>) {
+        match change {
+            Some(crate::highlight::MagnifierChange::Show) => self.zoom.show(),
+            Some(crate::highlight::MagnifierChange::Hide) => self.zoom.hide(),
+            None => {}
+        }
+    }
+
     fn start_action(
         &mut self,
         press: &PressToken,
@@ -332,7 +362,8 @@ impl ButtonEventHandler {
         target: ActionDispatchTarget,
     ) {
         if matches!(action, Action::Spotlight) {
-            self.highlight.show(press);
+            let change = self.highlight.show(press);
+            self.apply_magnifier(change);
             return;
         }
         if action.held_chord().is_some() && target.resolve(action).is_none() {
@@ -364,12 +395,14 @@ pub struct ActionRuntime {
 impl ActionRuntime {
     /// Build the action executor and its source-independent button worker.
     /// Pass the IPC server's highlight cell so it observes this worker's presses.
+    /// `presenter_modes` reports selections to the config owner's localized notice path.
     pub fn new(
         dpi_cycle: Arc<RwLock<DpiCycles>>,
         pointer_speeds: Arc<PointerSpeeds>,
         access: DeviceAccess,
         action_ring: tokio::sync::mpsc::UnboundedSender<Option<String>>,
         highlight: crate::highlight::Highlight,
+        presenter_modes: tokio::sync::mpsc::UnboundedSender<PresenterMode>,
     ) -> io::Result<Self> {
         let executor = ActionExecutor {
             dpi_cycle,
@@ -377,7 +410,12 @@ impl ActionRuntime {
             access,
             action_ring,
         };
-        let mut button_handler = ButtonEventHandler::new(executor.clone(), highlight);
+        let mut button_handler = ButtonEventHandler::new(
+            executor.clone(),
+            highlight,
+            openlogi_inject::zoom::Zoom::spawn()?,
+            presenter_modes,
+        );
         let buttons = ButtonRuntimeOwner::spawn(move |event| button_handler.handle(event))?;
         let input = buttons.input();
         Ok(Self {
@@ -635,6 +673,45 @@ mod tests {
     static BROWSER_NAV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[tokio::test]
+    async fn presenter_cycle_drives_the_selected_hold_and_notice_event() {
+        let highlight = crate::highlight::Highlight::default();
+        let (selected, mut modes) = tokio::sync::mpsc::unbounded_channel();
+        let mut handler = ButtonEventHandler::new(
+            executor_with(Arc::default()),
+            highlight.clone(),
+            openlogi_inject::zoom::Zoom::spawn().unwrap(),
+            selected,
+        );
+        handler.handle(ButtonRuntimeEvent::PresenterTap(
+            presenter_taps::TapEffect::CyclePresenterMode,
+        ));
+        assert_eq!(modes.try_recv().unwrap(), PresenterMode::Laser);
+        let press = PressToken::hook_for_test(1, ButtonId::Back);
+        handler.start_action(
+            &press,
+            &Action::Spotlight,
+            None,
+            ActionDispatchTarget::Keyboard,
+        );
+        assert_eq!(
+            highlight.observe(0).await.shown,
+            Some(openlogi_ipc::HighlightStyle::Laser)
+        );
+        for expected in [PresenterMode::Magnifier, PresenterMode::Spotlight] {
+            handler.handle(ButtonRuntimeEvent::PresenterTap(
+                presenter_taps::TapEffect::CyclePresenterMode,
+            ));
+            assert_eq!(modes.try_recv().unwrap(), expected);
+        }
+        assert_eq!(
+            highlight.observe(0).await.shown,
+            Some(openlogi_ipc::HighlightStyle::Laser),
+            "a live press keeps its selected effect"
+        );
+        // Only Laser is held here; this test never requests native Zoom or click injection.
+    }
+
+    #[tokio::test]
     async fn spotlight_tracks_release_and_runtime_shutdown() {
         let highlight = crate::highlight::Highlight::default();
         let executor = executor_with(Arc::default());
@@ -644,6 +721,7 @@ mod tests {
             executor.access,
             executor.action_ring,
             highlight.clone(),
+            tokio::sync::mpsc::unbounded_channel().0,
         )
         .unwrap();
         let dispatcher = runtime.dispatcher();

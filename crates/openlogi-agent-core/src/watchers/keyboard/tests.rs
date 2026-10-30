@@ -141,6 +141,7 @@ async fn divert_set_changes_reach_the_running_session_in_place() {
         },
         ring,
         crate::highlight::Highlight::default(),
+        tokio::sync::mpsc::unbounded_channel().0,
     )
     .unwrap();
     let divert = watch::Sender::new(dispatch(Action::MissionControl).divert);
@@ -275,6 +276,7 @@ async fn recovery_manager_waits_for_control_events_and_shutdown_between_retries(
             device_access.clone(),
             ring,
             crate::highlight::Highlight::default(),
+            tokio::sync::mpsc::unbounded_channel().0,
         )
         .unwrap();
         let (shutdown_tx, shutdown) = oneshot::channel();

@@ -22,12 +22,12 @@ pub(super) fn run_worker(
         if finish_shutdown_if_requested(shutdown, &mut state, emit) {
             return;
         }
-        // Shutdown and invalidation arrive with a `Wake`, so only a pending
-        // long-press threshold is a reason to stop waiting without a command.
+        // Shutdown and invalidation arrive with a `Wake`; only a long action
+        // or pending presenter tap needs a deadline wakeup.
         let command = match receive_command(events, state.next_deadline()) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if settle_due_long_presses(
+                if settle_due_actions(
                     events,
                     shutdown,
                     shared_generation,
@@ -46,8 +46,8 @@ pub(super) fn run_worker(
             }
         };
         synchronize_generation(&mut state, shared_generation, &mut generation, emit);
-        if state.has_due_long_press(Instant::now()) {
-            if settle_due_long_presses(
+        if state.has_due_action(Instant::now()) {
+            if settle_due_actions(
                 events,
                 shutdown,
                 shared_generation,
@@ -61,7 +61,7 @@ pub(super) fn run_worker(
             continue;
         }
         process_command(&mut state, command, generation, emit);
-        if settle_due_long_presses(
+        if settle_due_actions(
             events,
             shutdown,
             shared_generation,
@@ -115,7 +115,7 @@ fn process_command(
     }
 }
 
-pub(super) fn settle_due_long_presses(
+pub(super) fn settle_due_actions(
     events: &mpsc::Receiver<ButtonCommand>,
     shutdown: &mpsc::Receiver<ShutdownRequest>,
     shared_generation: &AtomicU64,
@@ -131,7 +131,7 @@ pub(super) fn settle_due_long_presses(
     // this generation. Observe that transition before any overdue timer.
     synchronize_generation(state, shared_generation, generation, emit);
     let due_presses = state.due_long_presses(Instant::now());
-    if due_presses.is_empty() {
+    if !state.has_due_action(Instant::now()) {
         if let Some(command) = first_command {
             process_command(state, command, *generation, emit);
         }
@@ -194,6 +194,7 @@ pub(super) fn settle_due_long_presses(
     emit_selected_long_presses(state, &due_presses, Instant::now(), &mut |event| {
         deferred.push(event);
     });
+    state.expire_presenter_taps(Instant::now(), &mut |event| deferred.push(event));
     emit_settled_events(deferred, &due_presses, emit);
     false
 }
@@ -228,7 +229,7 @@ fn emit_settled_events(
                 matches!(press.behavior, PressBehavior::LongPressFired)
                     && due_presses.contains(press.token())
             }
-            ButtonRuntimeEvent::Started(_) => false,
+            ButtonRuntimeEvent::Started(_) | ButtonRuntimeEvent::PresenterTap(_) => false,
         });
     for event in deadline_events.into_iter().chain(ordered_events) {
         emit(event);
@@ -283,6 +284,9 @@ pub(super) fn process_input(
                         press: press.clone(),
                         action,
                     });
+                }
+                if let Some(effect) = state.release_presenter_tap(&press, released_at) {
+                    emit(ButtonRuntimeEvent::PresenterTap(effect));
                 }
                 emit_released(press, emit);
             }

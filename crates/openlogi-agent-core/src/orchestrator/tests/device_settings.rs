@@ -974,3 +974,17 @@ fn presenter_spec_releases_only_its_own_controls_from_its_mouse_capture_plan() {
     );
     assert_eq!(orch.presenter_spec_for().unwrap().route, plan.target.route);
 }
+
+#[tokio::test]
+async fn presenter_mode_notice_uses_the_current_config_language() {
+    let mut config = Config::default();
+    config.app_settings.language = Some("ja".into());
+    let orch = orchestrator(config);
+    orch.announce_presenter_mode(openlogi_core::binding::PresenterMode::Laser);
+    let observed = orch.observable.notices().observe(0).await;
+    assert_eq!(observed.language.as_deref(), Some("ja"));
+    assert!(matches!(
+        observed.notices[0].kind,
+        openlogi_ipc::NoticeKind::PresenterMode(openlogi_core::binding::PresenterMode::Laser)
+    ));
+}

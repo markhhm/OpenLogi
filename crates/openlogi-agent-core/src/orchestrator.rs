@@ -862,6 +862,14 @@ impl Orchestrator {
         self.control_spec_for(DeviceKind::Presenter)
     }
 
+    /// Announce a mode selected by the action runtime in the current UI language.
+    pub fn announce_presenter_mode(&self, mode: openlogi_core::binding::PresenterMode) {
+        self.observable.notices().post(
+            NoticeKind::PresenterMode(mode),
+            self.config.app_settings.language.clone(),
+        );
+    }
+
     fn control_spec_for(&self, kind: DeviceKind) -> Option<KeyboardSpec> {
         let policy = ControlCapturePolicy::for_kind(kind)?;
         let candidates: Vec<KeyboardCandidate<'_>> = self

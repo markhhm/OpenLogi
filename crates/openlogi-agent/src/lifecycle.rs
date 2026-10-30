@@ -337,6 +337,9 @@ impl Armed {
                 Some(event) = watchers.next() => {
                     running.apply_watcher(event, &inventory_refresh).await;
                 }
+                Some(mode) = running.inputs.presenter_modes.recv() => {
+                    running.orchestrator.lock().await.announce_presenter_mode(mode);
+                }
                 Some(device_key) = running.inputs.triggers.recv() => {
                     running.begin_action_ring(device_key.as_deref()).await;
                 }

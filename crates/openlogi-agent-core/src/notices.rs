@@ -23,6 +23,7 @@ pub const NOTICE_LIFETIME: Duration = Duration::from_secs(8);
 
 /// A charge at or above which a battery that was low counts as charged again.
 const RECHARGED_PERCENT: u8 = 30;
+const PRESENTER_MODE_LIFETIME: Duration = Duration::from_secs(2);
 
 struct Posted {
     notice: Notice,
@@ -61,18 +62,28 @@ impl Default for NoticeBoard {
 }
 
 impl NoticeBoard {
-    /// Show `kind` for [`NOTICE_LIFETIME`], in the UI locale `language`
-    /// (`None` follows the overlay host's system locale).
+    /// Show `kind` in the UI locale `language`; mode changes replace the previous
+    /// mode notice for two seconds, other notices last [`NOTICE_LIFETIME`].
+    /// `None` follows the overlay host's system locale.
     pub fn post(&self, kind: NoticeKind, language: Option<String>) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let now = Instant::now();
         let mut posted = self.posted();
         // No overlay may be observing to end them, so a post drops what has
         // ended too: the list never grows past the notices still current.
-        posted.retain(|posted| posted.ends > now);
+        let mode_notice = matches!(&kind, NoticeKind::PresenterMode(_));
+        posted.retain(|posted| {
+            posted.ends > now
+                && !(mode_notice && matches!(&posted.notice.kind, NoticeKind::PresenterMode(_)))
+        });
+        let lifetime = if mode_notice {
+            PRESENTER_MODE_LIFETIME
+        } else {
+            NOTICE_LIFETIME
+        };
         posted.push(Posted {
             notice: Notice { id, kind },
-            ends: now + NOTICE_LIFETIME,
+            ends: now + lifetime,
         });
         self.publish(&posted, Locale::Set(language));
     }

@@ -1,5 +1,6 @@
 //! A physical press owns the highlight until its matching terminal event.
 
+use openlogi_core::binding::PresenterMode;
 use openlogi_ipc::{Generation, HighlightObservation, HighlightStyle, OBSERVE_HOLD};
 use tokio::sync::watch;
 
@@ -8,14 +9,20 @@ use crate::runtime::PressToken;
 #[derive(Clone)]
 struct State {
     generation: Generation,
-    owner: Option<PressToken>,
+    owner: Option<(PressToken, PresenterMode)>,
+    // shortcut: mode is per agent run; persist when presenter settings are introduced.
+    mode: PresenterMode,
 }
 
 impl State {
     fn observation(&self) -> HighlightObservation {
         HighlightObservation::new(
             self.generation,
-            self.owner.as_ref().map(|_| HighlightStyle::Spotlight),
+            self.owner.as_ref().and_then(|(_, mode)| match mode {
+                PresenterMode::Spotlight => Some(HighlightStyle::Spotlight),
+                PresenterMode::Laser => Some(HighlightStyle::Laser),
+                PresenterMode::Magnifier => None,
+            }),
         )
     }
 }
@@ -32,34 +39,86 @@ impl Default for Highlight {
             published: watch::Sender::new(State {
                 generation: 1,
                 owner: None,
+                mode: PresenterMode::default(),
             }),
         }
     }
 }
 
+/// A native magnifier transition derived from the single highlight owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MagnifierChange {
+    /// Enable Zoom if it is currently off.
+    Show,
+    /// Disable Zoom if it is currently on.
+    Hide,
+}
+
+impl State {
+    fn replace_owner(
+        &mut self,
+        owner: Option<(PressToken, PresenterMode)>,
+    ) -> Option<MagnifierChange> {
+        let before = self
+            .owner
+            .as_ref()
+            .is_some_and(|(_, mode)| *mode == PresenterMode::Magnifier);
+        let after = owner
+            .as_ref()
+            .is_some_and(|(_, mode)| *mode == PresenterMode::Magnifier);
+        self.owner = owner;
+        self.generation = self.generation.wrapping_add(1);
+        match (before, after) {
+            (false, true) => Some(MagnifierChange::Show),
+            (true, false) => Some(MagnifierChange::Hide),
+            _ => None,
+        }
+    }
+}
+
 impl Highlight {
+    /// Select the next mode for future holds; an existing press retains its mode.
+    pub(crate) fn cycle(&self) -> PresenterMode {
+        let mut mode = PresenterMode::default();
+        self.published.send_modify(|state| {
+            state.mode = state.mode.next();
+            mode = state.mode;
+        });
+        mode
+    }
+
     /// Publish this owner; repeated triggers from the same press are idempotent.
-    pub(crate) fn show(&self, press: &PressToken) {
+    pub(crate) fn show(&self, press: &PressToken) -> Option<MagnifierChange> {
+        let mut change = None;
         self.published.send_if_modified(|state| {
-            if state.owner.as_ref() == Some(press) {
+            if state
+                .owner
+                .as_ref()
+                .is_some_and(|(owner, _)| owner == press)
+            {
                 return false;
             }
-            state.owner = Some(press.clone());
-            state.generation = state.generation.wrapping_add(1);
+            change = state.replace_owner(Some((press.clone(), state.mode)));
             true
         });
+        change
     }
 
     /// Hide only if this press still owns the highlight.
-    pub(crate) fn end(&self, press: &PressToken) {
+    pub(crate) fn end(&self, press: &PressToken) -> Option<MagnifierChange> {
+        let mut change = None;
         self.published.send_if_modified(|state| {
-            if state.owner.as_ref() != Some(press) {
+            if !state
+                .owner
+                .as_ref()
+                .is_some_and(|(owner, _)| owner == press)
+            {
                 return false;
             }
-            state.owner = None;
-            state.generation = state.generation.wrapping_add(1);
+            change = state.replace_owner(None);
             true
         });
+        change
     }
 
     /// Answer on a new generation, or unchanged after [`OBSERVE_HOLD`].
@@ -136,5 +195,46 @@ mod tests {
         );
         highlight.show(&PressToken::hook_for_test(1, ButtonId::Back));
         assert_eq!(observed.await.shown, Some(HighlightStyle::Spotlight));
+    }
+    #[tokio::test]
+    async fn modes_are_captured_by_the_press_and_zoom_cleanup_rejects_stale_owners() {
+        let highlight = Highlight::default();
+        let first = PressToken::hook_for_test(1, ButtonId::Back);
+        let second = PressToken::hook_for_test(2, ButtonId::Back);
+        assert_eq!(highlight.cycle(), PresenterMode::Laser);
+        assert_eq!(highlight.show(&first), None);
+        assert_eq!(
+            highlight.observe(0).await.shown,
+            Some(HighlightStyle::Laser)
+        );
+        assert_eq!(highlight.cycle(), PresenterMode::Magnifier);
+        assert_eq!(
+            highlight.show(&first),
+            None,
+            "cycling cannot change an existing press"
+        );
+        assert_eq!(
+            highlight.observe(0).await.shown,
+            Some(HighlightStyle::Laser)
+        );
+        assert_eq!(highlight.show(&second), Some(MagnifierChange::Show));
+        assert_eq!(highlight.observe(0).await.shown, None, "Zoom is agent-side");
+        assert_eq!(highlight.end(&first), None);
+        assert_eq!(highlight.end(&second), Some(MagnifierChange::Hide));
+        assert_eq!(highlight.end(&second), None);
+        assert_eq!(highlight.show(&first), Some(MagnifierChange::Show));
+        assert_eq!(
+            highlight.show(&second),
+            None,
+            "successive magnifier owners keep Zoom on"
+        );
+        assert_eq!(highlight.cycle(), PresenterMode::Spotlight);
+        assert_eq!(highlight.show(&first), Some(MagnifierChange::Hide));
+        assert_eq!(
+            highlight.observe(0).await.shown,
+            Some(HighlightStyle::Spotlight)
+        );
+        assert_eq!(highlight.end(&second), None);
+        assert_eq!(highlight.end(&first), None);
     }
 }

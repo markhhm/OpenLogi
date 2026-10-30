@@ -18,6 +18,7 @@ use openlogi_core::binding::{Action, Binding, ButtonId, LONG_PRESS_THRESHOLD};
 use tracing::warn;
 
 use super::ActionDispatchTarget;
+use super::presenter_taps::{PresenterTaps, TapEffect};
 
 /// OS-hook callbacks must fail open rather than block.
 const EVENT_QUEUE_CAPACITY: usize = 128;
@@ -31,7 +32,7 @@ struct CaptureEpoch(u64);
 mod worker;
 use worker::run_worker;
 #[cfg(test)]
-use worker::{emit_canceled, emit_selected_long_presses, process_input, settle_due_long_presses};
+use worker::{emit_canceled, emit_selected_long_presses, process_input, settle_due_actions};
 
 /// A capture epoch bound to the config namespace its actions currently use.
 /// The namespace can hot-swap while the epoch remains the task's stable input
@@ -283,7 +284,18 @@ impl ActivePress {
     }
 
     pub(crate) fn start_action(&self) -> Option<&Action> {
-        self.behavior.start_action()
+        if self.is_presenter_tap() {
+            None
+        } else {
+            self.behavior.start_action()
+        }
+    }
+
+    /// The presenter-only top tap uses the same stable Spotlight binding as its hold.
+    fn is_presenter_tap(&self) -> bool {
+        matches!(self.token.key.source, ButtonSource::Hidpp(_))
+            && self.control() == &PressControl::Button(ButtonId::control(0x0050))
+            && self.behavior.start_action() == Some(&Action::Spotlight)
     }
 
     pub(crate) fn target(&self) -> ActionDispatchTarget {
@@ -325,6 +337,8 @@ pub(crate) enum EndReason {
 
 /// Typed output from the lifecycle worker.
 pub(crate) enum ButtonRuntimeEvent {
+    /// A top tap resolved without leaking a physical click to the foreground app.
+    PresenterTap(TapEffect),
     Started(ActivePress),
     Ended {
         press: ActivePress,
@@ -373,10 +387,20 @@ struct ShutdownRequest {
 #[derive(Default)]
 struct ButtonState {
     active: HashMap<PressKey, ActivePress>,
+    presenter_taps: HashMap<ButtonSource, PresenterTaps>,
 }
 
 impl ButtonState {
     fn press(&mut self, press: ActivePress) -> Option<ActivePress> {
+        let top_hold = matches!(press.token.key.source, ButtonSource::Hidpp(_))
+            && press.control() == &PressControl::Button(ButtonId::control(0x00d8));
+        if (top_hold
+            || press.start_action() == Some(&Action::Spotlight)
+            || self.active.contains_key(&press.token.key))
+            && let Some(taps) = self.presenter_taps.get_mut(&press.token.key.source)
+        {
+            taps.cancel();
+        }
         self.active.insert(press.token.key.clone(), press)
     }
 
@@ -392,6 +416,7 @@ impl ButtonState {
 
     fn cancel_press(&mut self, token: &PressToken) -> Option<ActivePress> {
         self.active(token)?;
+        self.presenter_taps.remove(&token.key.source);
         self.active.remove(&token.key)
     }
 
@@ -405,6 +430,7 @@ impl ButtonState {
     }
 
     fn cancel_source(&mut self, source: &ButtonSource) -> Vec<ActivePress> {
+        self.presenter_taps.remove(source);
         self.cancel_where(|key| key.source == *source)
     }
 
@@ -413,6 +439,7 @@ impl ButtonState {
     }
 
     fn cancel_all(&mut self) -> Vec<ActivePress> {
+        self.presenter_taps.clear();
         self.active.drain().map(|(_, press)| press).collect()
     }
 
@@ -450,16 +477,40 @@ impl ButtonState {
             .collect()
     }
 
-    /// The earliest long-press threshold still pending, which is the only
-    /// reason the worker has to wake without a command.
+    /// The earliest long-action or tap-replay deadline still pending.
     fn next_deadline(&self) -> Option<Instant> {
         self.active
             .values()
             .filter_map(|press| press.behavior.deadline())
+            .chain(
+                self.presenter_taps
+                    .values()
+                    .filter_map(PresenterTaps::deadline),
+            )
             .min()
     }
 
-    fn has_due_long_press(&self, now: Instant) -> bool {
+    fn release_presenter_tap(&mut self, press: &ActivePress, now: Instant) -> Option<TapEffect> {
+        if !press.is_presenter_tap() {
+            return None;
+        }
+        self.presenter_taps
+            .entry(press.token.key.source.clone())
+            .or_default()
+            .release(now)
+    }
+
+    fn expire_presenter_taps(&mut self, now: Instant, emit: &mut impl FnMut(ButtonRuntimeEvent)) {
+        for taps in self.presenter_taps.values_mut() {
+            if let Some(effect) = taps.expire(now) {
+                emit(ButtonRuntimeEvent::PresenterTap(effect));
+            }
+        }
+        self.presenter_taps
+            .retain(|_, taps| taps.deadline().is_some());
+    }
+
+    fn has_due_action(&self, now: Instant) -> bool {
         self.next_deadline().is_some_and(|deadline| deadline <= now)
     }
 

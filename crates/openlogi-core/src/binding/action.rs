@@ -219,9 +219,9 @@ pub enum Action {
     /// returns to the sensor's default DPI. A DPI LED (HID++ `0x1300`) is
     /// lit while the mode is on. Does nothing on other devices.
     TogglePrecisionMode,
-    /// Dim the screen around the pointer for the lifetime of the physical
-    /// press, as the Spotlight presenter's top button does in Logi Options+.
-    /// The pointer itself keeps moving natively; the overlay only draws.
+    /// Show the selected presenter effect for the lifetime of a physical press.
+    /// It starts with Spotlight dimming and can cycle to Laser or Magnifier.
+    /// The pointer itself keeps moving natively; the effect never moves it.
     ///
     /// On the presenter top tap control, delay a single click or cycle the
     /// hold mode on a double-click. Other controls hold the selected effect.

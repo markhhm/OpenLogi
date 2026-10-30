@@ -128,6 +128,8 @@ pub(crate) struct InputServices {
     pub(crate) ring: Arc<ActionRingManager>,
     pub(crate) triggers: tokio::sync::mpsc::UnboundedReceiver<Option<String>>,
     pub(crate) dispatcher: ActionDispatcher,
+    pub(crate) presenter_modes:
+        tokio::sync::mpsc::UnboundedReceiver<openlogi_core::binding::PresenterMode>,
     action_runtime: ActionRuntime,
     pub(crate) scroll_input: ScrollInputHandle,
     scroll_runtime: ScrollRuntime,
@@ -137,12 +139,14 @@ impl InputServices {
     fn start(shared: &SharedHandles, observable: &ObservableState) -> Option<Self> {
         let ring = Arc::new(ActionRingManager::default());
         let (sender, triggers) = tokio::sync::mpsc::unbounded_channel();
+        let (mode_sender, presenter_modes) = tokio::sync::mpsc::unbounded_channel();
         let action_runtime = match ActionRuntime::new(
             shared.dpi_cycle.clone(),
             shared.pointer_speeds(),
             shared.device_access(),
             sender,
             observable.highlight().clone(),
+            mode_sender,
         ) {
             Ok(runtime) => runtime,
             Err(e) => {
@@ -163,6 +167,7 @@ impl InputServices {
             ring,
             triggers,
             dispatcher,
+            presenter_modes,
             action_runtime,
             scroll_input,
             scroll_runtime,

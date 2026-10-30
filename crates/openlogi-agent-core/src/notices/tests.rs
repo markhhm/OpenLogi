@@ -285,3 +285,35 @@ async fn an_unchanged_board_answers_after_the_hold() {
     assert_eq!(unchanged.generation, since);
     assert_eq!(started.elapsed(), OBSERVE_HOLD);
 }
+
+#[tokio::test(start_paused = true)]
+async fn presenter_mode_notice_ends_quickly_without_ending_battery_notices() {
+    let board = NoticeBoard::default();
+    board.post(low_battery("Mouse"), Some("de".into()));
+    board.post(
+        NoticeKind::PresenterMode(openlogi_core::binding::PresenterMode::Laser),
+        Some("de".into()),
+    );
+    board.post(
+        NoticeKind::PresenterMode(openlogi_core::binding::PresenterMode::Magnifier),
+        Some("de".into()),
+    );
+    let current = board.observe(0).await;
+    assert_eq!(
+        current.notices.len(),
+        2,
+        "only the latest mode notice accompanies the battery notice"
+    );
+    assert!(matches!(
+        current.notices[1].kind,
+        NoticeKind::PresenterMode(openlogi_core::binding::PresenterMode::Magnifier)
+    ));
+    tokio::time::advance(super::PRESENTER_MODE_LIFETIME).await;
+    let observed = board.observe(0).await;
+    assert_eq!(observed.notices.len(), 1);
+    assert!(matches!(
+        observed.notices[0].kind,
+        NoticeKind::LowBattery { .. }
+    ));
+    assert_eq!(observed.language.as_deref(), Some("de"));
+}
